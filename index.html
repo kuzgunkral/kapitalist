@@ -18512,7 +18512,8 @@ function sohbetGonder(){
   var kadi=window._currentUser||'';
   inp.value="";
   fetch(CF_API+'/sohbet',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({kullanici_adi:kadi,mesaj:msg})})
-  .then(function(){sohbetYukle();})
+  .then(function(r){return r.json().then(function(d){return {ok:r.ok,hata:d.hata};});})
+  .then(function(x){if(x.ok){sohbetYukle();}else{log('🚫 Sohbet: '+(x.hata||'Gonderilemedi'),'er');}})
   .catch(function(e){console.warn("sohbet gonder hata:",e);});
 }
 
@@ -56850,7 +56851,9 @@ function renderElmas() {
 
 
 
-  h += '<div style="font-size:10px;font-weight:700;color:#3b4a60;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔧 Geliştirici Konsolu</div>';
+  h += '<div style="font-size:10px;font-weight:700;color:#3b4a60;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔧 Kapitalist Admin Paneli</div>';
+  h += '<div style="display:flex;gap:6px;margin-bottom:8px"><button id="devUserBtn" onclick="devKullanicilarYukle()" style="flex:1;padding:6px;background:#1e3a5f;color:#d8e8f8;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:700">&#128100; Sunucu Kullanicilari</button><button id="devUserYenile" onclick="devKullanicilarYukle()" style="display:none;padding:6px 10px;background:#1e3a5f;color:#94a3b8;border:none;border-radius:5px;cursor:pointer;font-size:11px">&#8635;</button></div>';
+  h += '<div id="devUserListesi" style="display:none;max-height:260px;overflow-y:auto;border:1px solid #1a2e45;border-radius:6px;background:#060f1a;padding:4px;margin-bottom:8px"></div>';
 
 
 
@@ -57018,6 +57021,77 @@ function renderElmas() {
 
 
 
+var _devKullanicilar=[];var _devBenim='';var _devSeviye=0;
+function devKullanicilarYukle(){
+  var el=document.getElementById('devUserListesi');
+  if(!el)return;
+  var tok=localStorage.getItem('cf_token')||'';
+  el.style.display='block';
+  el.innerHTML='<div style="padding:10px;color:#6080a0;font-size:11px">Yukleniyor...</div>';
+  fetch(CF_API+'/panel',{headers:{'Authorization':'Bearer '+tok}}).then(function(r){return r.json();}).then(function(d){
+    if(d.hata){el.innerHTML='<div style="padding:10px;color:#ef4444;font-size:11px">'+d.hata+'</div>';return;}
+    _devKullanicilar=d.kullanicilar||[];_devBenim=d.benim||'';_devSeviye=d.seviye||0;
+    devKullanicilarCiz();
+  }).catch(function(e){el.innerHTML='<div style="padding:10px;color:#ef4444;font-size:11px">Baglanti hatasi</div>';});
+}
+function devKullanicilarCiz(){
+  var el=document.getElementById('devUserListesi');
+  if(!el)return;
+  var btn=document.getElementById('devUserBtn');
+  if(btn)btn.textContent='&#128100; Kullanicilar ('+_devKullanicilar.length+')';
+  if(!_devKullanicilar.length){el.innerHTML='<div style="padding:10px;color:#6080a0;font-size:11px">Kayitli kullanici yok.</div>';return;}
+  var now=Date.now();
+  var h='';
+  _devKullanicilar.forEach(function(u){
+    var _banKendim=u.kullanici_adi===_devBenim;
+    var _adminKorunan=(u.admin===1&&_devSeviye<2)||(ADMINLAR_KLIENT.indexOf(u.kullanici_adi)>=0&&_devSeviye<2);
+    var _muted=u.mute_until>now;
+    var badge='';
+    if(u.admin===1)badge+='<span style="background:#7c3aed;color:#fff;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:800;margin-right:4px">ADMIN</span>';
+    if(u.ban===1)badge+='<span style="background:#7f1d1d;color:#fca5a5;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:800;margin-right:4px">BANLI</span>';
+    if(_muted)badge+='<span style="background:#78350f;color:#fcd34d;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:800;margin-right:4px">MUTE</span>';
+    var butonSt='padding:3px 7px;border:none;border-radius:4px;cursor:pointer;font-size:10px;font-weight:700;color:#fff;';
+    var bh='<div style="border-bottom:1px solid #12203a;padding:6px 4px">';
+    bh+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap"><span style="color:#d8e8f8;font-weight:700;font-size:12px">'+u.kullanici_adi+'</span>'+badge+'</div>';
+    bh+='<div style="display:flex;gap:4px;flex-wrap:wrap">';
+    if(!_banKendim&&!_adminKorunan){
+      if(_muted)bh+='<button onclick="devAksiyon(\''+u.kullanici_adi+'\',\'unmute\')" style="'+butonSt+'background:#f59e0b">&#128266; Ac</button>';
+      else bh+='<button onclick="devMuteSor(\''+u.kullanici_adi+'\')" style="'+butonSt+'background:#b45309">&#128263; Mute</button>';
+      if(u.ban===1)bh+='<button onclick="devAksiyon(\''+u.kullanici_adi+'\',\'unban\')" style="'+butonSt+'background:#16a34a">&#128275; Ban Ac</button>';
+      else bh+='<button onclick="devAksiyon(\''+u.kullanici_adi+'\',\'ban\')" style="'+butonSt+'background:#dc2626">&#9940; Ban</button>';
+      bh+='<button onclick="devAksiyon(\''+u.kullanici_adi+'\',\'mesaj_sil\')" style="'+butonSt+'background:#64748b">&#128465; Mesaj Sil</button>';
+      if(_devSeviye>=2){
+        bh+='<button onclick="devAksiyon(\''+u.kullanici_adi+'\',\'kayit_sil\')" style="'+butonSt+'background:#991b1b">&#128465; Kayit Sil</button>';
+        if(u.admin===1)bh+='<button onclick="devAksiyon(\''+u.kullanici_adi+'\',\'admin_al\')" style="'+butonSt+'background:#7c3aed">&#9878; Admin Al</button>';
+        else bh+='<button onclick="devAksiyon(\''+u.kullanici_adi+'\',\'admin_ver\')" style="'+butonSt+'background:#4338ca">&#128081; Admin Ver</button>';
+      }
+    } else if(_banKendim){
+      bh+='<span style="font-size:10px;color:#6080a0">(sen)</span>';
+    } else {
+      bh+='<span style="font-size:10px;color:#6080a0">&#128274; korumali</span>';
+    }
+    bh+='</div></div>';
+    h+=bh;
+  });
+  el.innerHTML=h;
+}
+var ADMINLAR_KLIENT=['kuzgun'];
+function devMuteSor(kadi){
+  var s=prompt('Kac dakika susturulsun? (or: 10, 60, 1440)','60');
+  if(!s)return;
+  devAksiyon(kadi,'mute',Number(s)||60);
+}
+function devAksiyon(hedef,islem,sure_dk){
+  if(islem==='ban'&&!confirm(hedef+' sohbetten banlanacak. Emin misiniz?'))return;
+  if(islem==='kayit_sil'&&!confirm(hedef+' bulut kaydi SILINECEK, geri alinamaz. Emin misiniz?'))return;
+  var tok=localStorage.getItem('cf_token')||'';
+  fetch(CF_API+'/panel/aksiyon',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({hedef:hedef,islem:islem,sure_dk:sure_dk||0})})
+  .then(function(r){return r.json();}).then(function(d){
+    if(d.hata){alert('Hata: '+d.hata);return;}
+    log('🛡️ '+d.mesaj,'ok');
+    devKullanicilarYukle();
+  }).catch(function(){alert('Baglanti hatasi');});
+}
 function cheatExec(cmd) {
 
 
@@ -67704,14 +67778,7 @@ function showDevConsole() {
 
 
   if (!sifre) return;
-  fetch('https://lvqeatihvyplioitrtiu.supabase.co/functions/v1/verify-dev-password',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','apikey':'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx2cWVhdGlodnlwbGlvaXRydGl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM1NDk4MjMsImV4cCI6MjEwOTEyNTgyM30.4DSEKiRc7JILzsU0LzTav-fC2c-GL_syYfPZEa-00DY','Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx2cWVhdGlodnlwbGlvaXRydGl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM1NDk4MjMsImV4cCI6MjEwOTEyNTgyM30.4DSEKiRc7JILzsU0LzTav-fC2c-GL_syYfPZEa-00DY'},
-    body:JSON.stringify({password:sifre})
-  }).then(function(r){return r.json();}).then(function(d){
-    if(d.ok){_devConsoleAc();}
-    else{alert('Yanlis sifre!');}
-  }).catch(function(){alert('Baglanti hatasi!');});
+  fetch(CF_API+'/dev-giris',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sifre:sifre})}).then(function(r){return r.json();}).then(function(d){if(d.ok){_devConsoleAc();}else{alert('Yanlis sifre!');}}).catch(function(){alert('Baglanti hatasi!');});
   return;
 
 
