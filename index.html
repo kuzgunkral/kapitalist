@@ -97505,18 +97505,12 @@ function doReset() {
   G.started = false;
   var key = window._currentUser ? getSaveKey(window._currentUser) : 'parp_v7';
   localStorage.removeItem(key);
-  if(window._supaUser && typeof supa !== "undefined") {
-    var _klanAdReset = G.klan && G.klan.ad;
-    var _liderMi = G.klan && G.klan.kuruldu;
-    var _oyAdiReset = window._supaUser.user_metadata && window._supaUser.user_metadata.kullanici_adi || '';
-    // Once klan ve mesajlari temizle, sonra oyun kaydini sil
-    var _sil = [];
-    if(_klanAdReset) {
-      _sil.push(window.__noopDB && __noopDB.from('klan_mesajlar').delete().eq('klan_ad', _klanAdReset));
-      if(_liderMi) _sil.push(window.__noopDB && __noopDB.from('klanlar').delete().eq('ad', _klanAdReset));
-    }
-    _sil.push(window.__noopDB && __noopDB.from('oyun_kayitlari').delete().eq('kullanici_id', window._supaUser.id));
-    Promise.all(_sil).then(function(){ location.reload(); });
+  // Buluttaki kaydi da sil - yoksa acilista eski kayit geri yuklenir
+  var _tok = getCFToken();
+  if(_tok) {
+    fetch(CF_API+'/sil', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+_tok}, body:'{}'})
+      .then(function(){ location.reload(); })
+      .catch(function(e){ console.warn('Bulut sifirlama hatasi:', e); location.reload(); });
     return;
   }
   location.reload();
