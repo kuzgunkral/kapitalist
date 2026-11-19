@@ -311,16 +311,6 @@ async function supaKaydet(kullaniciAdi, veri) {
     method: 'POST', headers: headers,
     body: JSON.stringify({kullanici_adi: kadi, surum: 'v1', veri: _saveData})
   });
-  // Kullanici verisini ayri tabloya kaydet
-  fetch(CF_API+'/user/save', {
-    method: 'POST', headers: headers,
-    body: JSON.stringify({
-      kullanici_adi: kadi,
-      elmas: _g.elmas || 0,
-      para: _g.money || 0,
-      toplam_kazanc: _g.totalEarned || 0
-    })
-  });
 }
 
 // ---- OYUN YUKLE ----
@@ -343,8 +333,9 @@ async function supaKaydetDelta(kullaniciAdi, delta) {
 // ---- OTURUM KONTROL (Cloudflare) ----
 (function() {
   var token = localStorage.getItem('cf_token');
-  var uname = localStorage.getItem('cf_kullanici');
+  var uname = localStorage.getItem('cf_user') || localStorage.getItem('cf_kullanici');
   if(token && uname) {
+    localStorage.setItem('cf_user', uname);
     window._cfToken = token;
     window._currentUser = uname;
     window._supaUser = {id: uname, kullanici_adi: uname, user_metadata: {kullanici_adi: uname}};
@@ -81572,8 +81563,10 @@ window._satCdTimer = setInterval(function(){
 
 window.onload = function() {
   var cfToken = localStorage.getItem('cf_token');
-  var cfUser = localStorage.getItem('cf_user');
+  var cfUser = localStorage.getItem('cf_user') || localStorage.getItem('cf_kullanici');
   if (cfToken && cfUser) {
+    if (!window._cfToken) window._cfToken = cfToken;
+    if (!window._supaUser) window._supaUser = {id: cfUser, kullanici_adi: cfUser, user_metadata: {kullanici_adi: cfUser}};
     window._currentUser = cfUser;
     loadUserGame(cfUser);
     return;
@@ -87692,6 +87685,7 @@ function doLogin() {
     }
     if (d.token) {
       localStorage.setItem('cf_token', d.token);
+      localStorage.setItem('cf_user', u);
       localStorage.setItem('cf_kullanici', u);
       window._cfToken = d.token;
       window._currentUser = u;
@@ -87743,6 +87737,7 @@ function doRegister() {
     }
     if (d.token) {
       localStorage.setItem('cf_token', d.token);
+      localStorage.setItem('cf_user', u);
       localStorage.setItem('cf_kullanici', u);
       window._cfToken = d.token;
       window._currentUser = u;
@@ -87879,11 +87874,21 @@ function loadUserGame(username) {
         // _supaYuklendi false yapilmiyor - donguye girmesin
         loadUserGame(username);
       } else {
-        // Supabase'de kayit yok - localStorage'i da temizle, setup'a git
-        var key3 = getSaveKey(username);
-        localStorage.removeItem(key3);
+        // Bulutta kayit yok: YEREL KAYDI KORU - oyunu kapatma, setup'a dusme
+        try {
+          var localRaw = localStorage.getItem(getSaveKey(username));
+          var localData = localRaw ? JSON.parse(localRaw) : null;
+          if (localData && localData.started) {
+            if (!window._gameOpen) {
+              window._gameOpen = true;
+              var gw = document.getElementById('gameWrap'); if(gw) gw.style.display = 'block';
+            }
+            console.warn('Bulut kaydi yok, yerel kayitla devam ediliyor:', username);
+            return;
+          }
+        } catch(e) {}
+        // Gercekten kayit yok: setup ekranini goster
         window._gameOpen = false;
-        var gw = document.getElementById('gameWrap'); if(gw) gw.style.display = 'none';
         var lw = document.getElementById('loginWrap'); if(lw) lw.style.display = 'none';
         var sw = document.getElementById('setupWrap'); if(sw) sw.style.display = 'flex';
       }
@@ -91506,7 +91511,7 @@ function logoutGame() {
   var _tb = document.getElementById('topbar'); if(_tb) _tb.style.display = 'none';
   var _gw = document.getElementById('gameWrap'); if(_gw) _gw.style.display = 'none';
   // signOut -> sonra reload ile login ekranina git
-  localStorage.removeItem("cf_token"); localStorage.removeItem("cf_user"); location.reload();
+  localStorage.removeItem("cf_token"); localStorage.removeItem("cf_user"); localStorage.removeItem("cf_kullanici"); location.reload();
 }
 
 
