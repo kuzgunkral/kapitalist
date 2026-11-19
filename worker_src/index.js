@@ -90,19 +90,19 @@ var index_default = {
                 "Content-Type": "application/json"
               },
               body: JSON.stringify({
-                from: "KuZGuN Ticaret <onboarding@resend.dev>",
+                from: "Kapitalist <onboarding@resend.dev>",
                 to: [email],
-                subject: "KuZGuN Ticaret - Ho\u015F Geldin!",
+                subject: "Kapitalist - Ho\u015F Geldin!",
                 html: `<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#0d1117;color:#e6edf3;border-radius:12px">
-                  <h1 style="color:#58a6ff;text-align:center">\u{1F985} KuZGuN Ticaret</h1>
+                  <h1 style="color:#58a6ff;text-align:center">\u{1F4B0} Kapitalist</h1>
                   <p>Merhaba <b>${kullanici_adi}</b>,</p>
-                  <p>KuZGuN Ticaret Oyunu'na ho\u015F geldin! Hesab\u0131n ba\u015Far\u0131yla olu\u015Fturuldu.</p>
+                  <p>Kapitalist'e ho\u015F geldin! Hesab\u0131n ba\u015Far\u0131yla olu\u015Fturuldu.</p>
                   <div style="background:#161b22;border-radius:8px;padding:16px;margin:16px 0">
                     <p style="margin:4px 0"><b>Kullan\u0131c\u0131 Ad\u0131:</b> ${kullanici_adi}</p>
                     <p style="margin:4px 0"><b>E-posta:</b> ${email}</p>
                   </div>
-                  <p>Hemen oyna: <a href="https://kuzgunkral.github.io/kuzgun-ticaret/" style="color:#58a6ff">kuzgun-ticaret</a></p>
-                  <p style="color:#8b949e;font-size:12px;margin-top:20px">KuZGuN Ticaret Ekibi</p>
+                  <p>Hemen oyna: <a href="https://kuzgunkral.github.io/kuzgun-ticaret/" style="color:#58a6ff">Kapitalist</a></p>
+                  <p style="color:#8b949e;font-size:12px;margin-top:20px">Kapitalist Ekibi</p>
                 </div>`
               })
             });
