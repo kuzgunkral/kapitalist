@@ -281,6 +281,7 @@ function getCFToken() {
 }
 
 async function supaKaydet(kullaniciAdi, veri) {
+  if(window._resetDevam) return; // sifirlama sirasinda kayit yapma - kayit dirilmesin
   if(!getCFToken()) return;
   var _g = veri || (typeof G !== 'undefined' ? G : null);
   if(!_g) return;
@@ -18478,7 +18479,7 @@ button,input,select{font-family:inherit}
 function anasayfaGuncelle(){if(!window.G)return;var p=document.getElementById("ana-para");if(p)p.textContent=typeof fmt==="function"?fmt(G.money||0):(G.money||0);var e=document.getElementById("ana-elmas");if(e)e.textContent=typeof fmtElmas==="function"?fmtElmas(G.elmas||0):(G.elmas||0);var g=document.getElementById("ana-gun");if(g)g.textContent="Gun "+(G.day||1);var s=document.getElementById("ana-sehir");if(s)s.textContent=G.city||"-";}
 (function(){var _ol=window.log;window.log=function(msg,tip){if(_ol)_ol.apply(this,arguments);var el=document.getElementById("ana-log");if(el){var d=document.createElement("div");d.style.borderBottom="1px solid #0d1927";d.style.padding="2px 0";d.style.color=tip==="er"?"#ef4444":tip==="sy"?"#f59e0b":tip==="ok"?"#10b981":"#d8e8f8";d.innerHTML=msg;el.appendChild(d);if(el.children.length>100)el.removeChild(el.firstChild);el.scrollTop=el.scrollHeight;}};})();
 setInterval(function(){var t=document.getElementById("tab-anasayfa");if(t&&t.style.display!=="none"){anasayfaGuncelle();sohbetYukle();}},3000);
-var _gMute=false; var _gKapali=false; var _gBanlilar=[];
+var _gMute=false; var _gKapali=false; var _gBanlilar=[]; var _gSeciliMesajlar=[];
 function sohbetYukle(){
   var el=document.getElementById("sohbet-mesajlar");
   if(!el)return;
@@ -18496,7 +18497,8 @@ function sohbetYukle(){
       var kadi=window._currentUser||'';
       var renk=m.kullanici_adi===kadi?"#60a5fa":"#10b981";
       d.innerHTML="<span style='color:"+renk+";font-weight:700'>"+m.kullanici_adi+"</span> <span style='color:#4a7090;font-size:11px'>"+t+"</span> <span style='color:#cbd5e1'>"+m.mesaj+"</span>";
-      d.onclick=function(){this.style.background=this.style.background?"":"rgba(30,58,95,0.6)";};
+      if(_gSeciliMesajlar.indexOf(m.id)>=0)d.style.background="rgba(30,58,95,0.6)";
+      d.onclick=function(){var i=_gSeciliMesajlar.indexOf(m.id);if(i>=0){_gSeciliMesajlar.splice(i,1);this.style.background="";}else{_gSeciliMesajlar.push(m.id);this.style.background="rgba(30,58,95,0.6)";}};
       d.oncontextmenu=function(e){e.preventDefault();gSohbetCtx(e,m.kullanici_adi,m.id);};
       el.appendChild(d);
     });
@@ -18516,7 +18518,7 @@ function sohbetGonder(){
 
 function gSohbetMuteToggle(){_gMute=!_gMute;var b=document.getElementById("gMuteBtn");if(b){b.textContent=_gMute?"Unmute":"Mute";b.style.color=_gMute?"#ef4444":"#94a3b8";b.style.borderColor=_gMute?"#ef4444":"#334155";}}
 function gSohbetKapatToggle(){_gKapali=!_gKapali;var b=document.getElementById("gKapatBtn");var w=document.getElementById("sohbet-inp-wrap");if(b){b.textContent=_gKapali?"Sohbeti Ac":"Sohbeti Kapat";b.style.color=_gKapali?"#ef4444":"#94a3b8";}if(w)w.style.display=_gKapali?"none":"flex";}
-function gSohbetSeciliSil(){var el=document.getElementById("sohbet-mesajlar");if(!el)return;var ids=[];el.querySelectorAll("div[style*='rgba(30,58,95']").forEach(function(d){if(d.dataset.id)ids.push(d.dataset.id);});if(!ids.length)return;var tok=localStorage.getItem('cf_token')||'';Promise.all(ids.map(function(id){return fetch(CF_API+'/sohbet/sil',{method:'DELETE',headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({id:id})});})).then(function(){sohbetYukle();});}
+function gSohbetSeciliSil(){if(!_gSeciliMesajlar.length)return;var ids=_gSeciliMesajlar.slice();var tok=localStorage.getItem('cf_token')||'';Promise.all(ids.map(function(id){return fetch(CF_API+'/sohbet/sil',{method:'DELETE',headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({id:id})});})).then(function(){_gSeciliMesajlar=[];sohbetYukle();});}
 function gSohbetTemizle(){if(!confirm('Tum global sohbet silinsin mi?'))return;fetch(CF_API+'/sohbet/temizle',{method:'DELETE',headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}}).then(function(){sohbetYukle();});}
 function gSohbetCtx(e,kadi,id){var old=document.getElementById("gCtxMenu");if(old)old.remove();var m=document.createElement("div");m.id="gCtxMenu";m.style.cssText="position:fixed;z-index:99999;background:#0a1628;border:1px solid #1e3a5f;border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.7);min-width:160px;";m.style.left=e.clientX+"px";m.style.top=e.clientY+"px";var s="padding:6px 10px;cursor:pointer;font-size:12px;border-radius:4px;";m.innerHTML="<div style='"+s+"color:#f59e0b' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='_gBanlilar.push(\""+kadi+"\");sohbetYukle();document.getElementById(\"gCtxMenu\").remove()'>&#x1F6AB; Banla: "+kadi+"</div><div style='"+s+"color:#ef4444' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='fetch(CF_API+\"/sohbet/sil\",{method:\"DELETE\",headers:{\"Authorization\":\"Bearer \"+(localStorage.getItem(\"cf_token\")||\"\"),\"Content-Type\":\"application/json\"},body:JSON.stringify({id:\""+id+"\"})}).then(function(){sohbetYukle();});document.getElementById(\"gCtxMenu\").remove()'>&#x1F5D1; Mesaji Sil</div>";document.body.appendChild(m);setTimeout(function(){document.addEventListener("click",function h(){m.remove();document.removeEventListener("click",h);},true);},100);}
 // Anasayfa acilinca sohbeti yukle
@@ -75912,6 +75914,7 @@ function maliyetSifirla(k) {
 
 
 function save() {
+  if(window._resetDevam) return; // sifirlama sirasinda kayit yapma
 
 
 
@@ -96535,6 +96538,7 @@ function fluctuate() {
 
 // Sayfa kapatilmadan/yenilemeden once Supabase'e aninda kaydet
 window.addEventListener('beforeunload', function() {
+  if(window._resetDevam) return; // sifirlama: eski G'yi geri yazma, bulut save firlatma
   if(window._supaUser && window._currentUser && typeof G !== 'undefined') {
     if(window._supaSaveTimer) { clearTimeout(window._supaSaveTimer); window._supaSaveTimer = null; }
     // Sync kayit (fetch API ile)
@@ -97497,6 +97501,8 @@ function hideReset() { document.getElementById("cbar").classList.remove("on"); }
 
 
 function doReset() {
+  // Save motorlarini KILITLE - in-flight/beforeunload istekleri kaydi diriltmesin
+  window._resetDevam = true;
   // Once tum timerlari durdur - save() tekrar kayit etmesin
   if(window._supaSaveTimer) { clearTimeout(window._supaSaveTimer); window._supaSaveTimer = null; }
   if(typeof mktTimer !== 'undefined' && mktTimer) { clearInterval(mktTimer); mktTimer = null; }
@@ -97506,11 +97512,15 @@ function doReset() {
   var key = window._currentUser ? getSaveKey(window._currentUser) : 'parp_v7';
   localStorage.removeItem(key);
   // Buluttaki kaydi da sil - yoksa acilista eski kayit geri yuklenir
+  // Cift silme: ilk /sil'den sonra havaalaninda bekleyen /save istekleri biter, ikinci /sil temizler
   var _tok = getCFToken();
   if(_tok) {
-    fetch(CF_API+'/sil', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+_tok}, body:'{}'})
-      .then(function(){ location.reload(); })
-      .catch(function(e){ console.warn('Bulut sifirlama hatasi:', e); location.reload(); });
+    var _sil = function(){ return fetch(CF_API+'/sil', {method:'POST', headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+_tok}, body:'{}'}); };
+    _sil().catch(function(){}).then(function(){
+      setTimeout(function(){
+        _sil().catch(function(){}).then(function(){ location.reload(); });
+      }, 800);
+    });
     return;
   }
   location.reload();
