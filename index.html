@@ -108305,15 +108305,19 @@ function klanKur(ad) {
     var _kalan = Math.ceil((G._klanCezaBitis - Date.now()) / 3600000);
     log('⏳ Klandan çıkış cezası! ' + _kalan + ' saat daha klan kuramazsın.', 'er'); return;
   }
-  var _oyAdi = G._oyuncuAdi || (window._supaUser&&window._supaUser.user_metadata&&window._supaUser.user_metadata.kullanici_adi) || 'Lider';
-  G.klan.ad = ad.trim(); G.klan.kuruldu = true; G.klan.lider = _oyAdi; G.klan.uyeler = []; G.klan.yardimci = null;
-  save(); renderKlan(); log('Klan kuruldu: '+G.klan.ad+' ⚔️','ok');
-  if(typeof renderIhracat==='function') renderIhracat();
-  // Klana katilinca ihale otomatik ac
-  if(!G.ihaleLevel||G.ihaleLevel<1){G.ihaleLevel=1;G.ihaleKatilimBitis=0;G.ihaleKatilimOran=0;G.ihaleler=[];ihaleTick();if(typeof renderIhale==='function')renderIhale();}
+  var _oyAdi = G._oyuncuAdi || (window._currentUser||'Lider');
+  fetch(CF_API + '/klan/olustur', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}, body:JSON.stringify({ad:ad.trim()})})
+  .then(function(r){return r.json();}).then(function(d){
+    if(d.hata) { log('⛔ ' + d.hata, 'er'); return; }
+    G.klan.ad = ad.trim(); G.klan.kuruldu = true; G.klan.lider = _oyAdi; G.klan.uyeler = []; G.klan.yardimci = null;
+    save(); renderKlan(); log('Klan kuruldu: '+G.klan.ad+' ⚔️','ok');
+    if(typeof renderIhracat==='function') renderIhracat();
+    // Klana katilinca ihale otomatik ac
+    if(!G.ihaleLevel||G.ihaleLevel<1){G.ihaleLevel=1;G.ihaleKatilimBitis=0;G.ihaleKatilimOran=0;G.ihaleler=[];ihaleTick();if(typeof renderIhale==='function')renderIhale();}
+  }).catch(function(){ log('Sunucuya bağlanılamadı, klan kurulamadı!','er'); });
 }
 
-// Klan listesini Supabase'den çek ve göster
+// Klan listesini Cloudflare D1'den çek ve göster
 async function klanListesiGoster() {
   var _el = document.getElementById('klanListesiModal');
   if(_el) { _el.remove(); return; }
@@ -108322,35 +108326,45 @@ async function klanListesiGoster() {
   _modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center';
   _modal.innerHTML = '<div style="background:#202a42;border:1px solid #283858;border-radius:12px;padding:24px;min-width:400px;max-width:600px;max-height:80vh;overflow-y:auto"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><span style="font-size:18px;font-weight:800;color:#f59e0b">⚔️ Klan Listesi</span><button onclick="document.getElementById(\'klanListesiModal\').remove()" style="background:none;border:none;color:#ef4444;font-size:18px;cursor:pointer">✕</button></div><div id="klanListesiIcerik" style="color:#6080a0">Yükleniyor...</div></div>';
   document.body.appendChild(_modal);
-  // Klan listesi (bulut yakinda aktif olacak)
-  var data = [];
+  var _ic = document.getElementById('klanListesiIcerik');
   var h = '';
-  data.forEach(function(k) {
-    h += '<div style="background:#07111f;border:1px solid #283858;border-radius:8px;padding:12px;margin-bottom:8px">';
-    h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-    h += '<div><span style="font-size:15px;font-weight:800;color:#d8e8f8">⚔️ '+k.ad+'</span> <span style="font-size:11px;color:#a78bfa">Lv'+k.seviye+'</span></div>';
-    h += '<span style="font-size:12px;color:#6080a0">👥 '+k.uye_sayisi+'/30</span></div>';
-    h += '<div style="font-size:11px;color:#6080a0;margin-top:4px">Lider: <b style="color:#f59e0b">'+k.lider+'</b>';
-    if(k.aciklama) h += ' · '+k.aciklama;
-    h += '</div>';
-    h += '<button onclick="klanKatilSupa(\''+k.ad+'\')" style="margin-top:8px;padding:4px 14px;background:#2e4060;color:#10b981;border:1px solid #10b981;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Katıl</button>';
-    h += '</div>';
-  });
-  if(!h) h = '<div style="text-align:center;padding:20px;color:#6080a0;font-size:12px">Klan listesi şu anda kullanılamıyor.</div>';
+  try {
+    var r = await fetch(CF_API + '/klan/ara?q=');
+    var data = await r.json();
+    if (data.hata) throw new Error(data.hata);
+    var klanlar = data.klanlar || [];
+    klanlar.forEach(function(k) {
+      h += '<div style="background:#07111f;border:1px solid #283858;border-radius:8px;padding:12px;margin-bottom:8px">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+      h += '<div><span style="font-size:15px;font-weight:800;color:#d8e8f8">⚔️ '+k.ad+'</span> <span style="font-size:11px;color:#a78bfa">Lv'+(k.seviye||1)+'</span></div>';
+      h += '<span style="font-size:12px;color:#6080a0">👥 '+(k.uye_sayisi||0)+'/30</span></div>';
+      h += '<div style="font-size:11px;color:#6080a0;margin-top:4px">Lider: <b style="color:#f59e0b">'+(k.lider||'?')+'</b></div>';
+      h += '<button onclick="klanKatilSupa(\''+k.id+'\',\''+(k.ad||'')+'\')" style="margin-top:8px;padding:4px 14px;background:#2e4060;color:#10b981;border:1px solid #10b981;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Katıl</button>';
+      h += '</div>';
+    });
+    if(!h) h = '<div style="text-align:center;padding:20px;color:#6080a0;font-size:12px">Henüz kurulmuş klan yok. İlk klanı sen kur!</div>';
+  } catch(e) {
+    h = '<div style="text-align:center;padding:20px;color:#ef4444;font-size:12px">Sunucuya bağlanılamadı. Tekrar dene.</div>';
+  }
   _ic.innerHTML = h;
 }
 
-function klanKatilSupa(klanAd) {
+async function klanKatilSupa(klanId, klanAd) {
   if(G.klan && G.klan.kuruldu) { log('Zaten bir klana üyesin!','er'); return; }
   if(G._klanCezaBitis && Date.now() < G._klanCezaBitis) {
     var _kalan = Math.ceil((G._klanCezaBitis - Date.now()) / 3600000);
     log('⏳ Klandan çıkış cezası! ' + _kalan + ' saat daha bekleyin.', 'er'); return;
   }
   klanInit();
+  var _oyAdi = G._oyuncuAdi || (window._currentUser||'Oyuncu');
+  try {
+    var r = await fetch(CF_API + '/klan/katil', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}, body:JSON.stringify({klan_id:klanId})});
+    var d = await r.json();
+    if(d.hata) { log('⛔ ' + d.hata, 'er'); return; }
+  } catch(e) { log('Sunucuya bağlanılamadı!','er'); return; }
   G.klan.ad = klanAd;
   G.klan.kuruldu = true;
-  var _oyAdi = G._oyuncuAdi || 'Oyuncu';
-  G.klan.lider = _oyAdi;
+  G.klan.lider = '';
   G.klan.uyeler = [];
   save(); renderKlan();
   if(typeof renderIhracat==='function') renderIhracat();
@@ -108387,7 +108401,8 @@ async function klandanCikOnayla() {
   var _klanAd = G.klan.ad;
   var _yardimci = G.klan.yardimci;
   var _lider = G.klan.kuruldu; // ben lidersem true
-  
+  // Cloud D1: uye kaydini sil (lider ise klan da silinir)
+  try { fetch(CF_API + '/klan/ayril', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}}).catch(function(){}); } catch(e){}
   if(_lider && _yardimci) {
     // Asist var → asist lider olur
     try {
@@ -108757,6 +108772,7 @@ function renderKlan() {
     h+='<div style="display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap">';
     h+='<input type="text" id="klanAdInp" placeholder="Klan adi..." maxlength="20" style="padding:8px 14px;background:#07111f;border:1px solid #283858;color:#d8e8f8;border-radius:8px;font-size:14px;font-weight:700;width:180px">';
     h+='<button onclick="klanKur(document.getElementById(\'klanAdInp\').value)" style="padding:8px 20px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">⚔️ Klan Kur</button>';
+    h+='<button onclick="klanListesiGoster()" style="padding:8px 20px;background:#0d2a4f;color:#10b981;border:1px solid #10b981;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">🚪 Klana Katıl</button>';
     h+='</div></div>';
   } else {
     var tu=klanToplamUye();

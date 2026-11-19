@@ -426,7 +426,9 @@ var index_default = {
     if (path === "/klan/ara" && request.method === "GET") {
       try {
         const q = url.searchParams.get("q") || "";
-        const { results } = await env.DB.prepare("SELECT id,ad,seviye FROM klanlar WHERE ad LIKE ? LIMIT 10").bind("%" + q + "%").all();
+        const { results } = await env.DB.prepare(
+          "SELECT kl.id, kl.ad, kl.seviye, COALESCE(l.kullanici_adi,'?') AS lider, (SELECT COUNT(*) FROM klan_uyeler ku WHERE ku.klan_id=kl.id) AS uye_sayisi FROM klanlar kl LEFT JOIN kullanicilar l ON l.id=kl.lider_id WHERE (?1='' OR kl.ad LIKE '%'||?1||'%') ORDER BY uye_sayisi DESC, kl.ad ASC LIMIT 100"
+        ).bind(q).all();
         return jsonResponse({ klanlar: results || [] });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
@@ -460,7 +462,14 @@ var index_default = {
         const k = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(uid).first();
         const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 400);
-        if (uyelik.rol === "lider") return jsonResponse({ hata: "Lider klandan ayrilamaz" }, 400);
+        if (uyelik.rol === "lider") {
+          // Lider ayrilirsa klan tamamen silinir (uyeler + log + sohbet)
+          await env.DB.prepare("DELETE FROM klan_uyeler WHERE klan_id=?").bind(uyelik.klan_id).run();
+          await env.DB.prepare("DELETE FROM klan_log WHERE klan_id=?").bind(uyelik.klan_id).run();
+          await env.DB.prepare("DELETE FROM klan_sohbet WHERE klan_id=?").bind(uyelik.klan_id).run();
+          await env.DB.prepare("DELETE FROM klanlar WHERE id=?").bind(uyelik.klan_id).run();
+          return jsonResponse({ basarili: true, klan_silindi: true });
+        }
         await env.DB.prepare("DELETE FROM klan_uyeler WHERE kullanici_id=?").bind(uid).run();
         const logId = crypto.randomUUID();
         await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(logId, uyelik.klan_id, k.kullanici_adi + " klandan ayrildi", Date.now()).run();
