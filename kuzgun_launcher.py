@@ -9,7 +9,7 @@ from PyQt6.QtGui import QFont
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CF_API = 'https://kapitalist-api.gitbaskabul.workers.dev'
 OTURUM_FILE = os.path.join(SCRIPT_DIR, '.oturum.json')
-URLS = {'oyun':'https://kuzgunkral.github.io/kuzgun-ticaret/','gmail':'https://mail.google.com/mail/u/0/#inbox','cloudflare':'https://dash.cloudflare.com','github':'https://github.com/kuzgunkral/kuzgun-ticaret','worker':'https://kapitalist-api.gitbaskabul.workers.dev'}
+URLS = {'oyun':'https://kuzgunkral.github.io/kapitalist/','gmail':'https://mail.google.com/mail/u/0/#inbox','cloudflare':'https://dash.cloudflare.com','github':'https://github.com/kuzgunkral/kapitalist','worker':'https://kapitalist-api.gitbaskabul.workers.dev'}
 BASLIKLAR = {'oyun':'Oyun','gmail':'Gmail','cloudflare':'Cloudflare','github':'GitHub','worker':'Worker API'}
 
 TAB_CSS = """

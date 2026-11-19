@@ -101,7 +101,7 @@ var index_default = {
                     <p style="margin:4px 0"><b>Kullan\u0131c\u0131 Ad\u0131:</b> ${kullanici_adi}</p>
                     <p style="margin:4px 0"><b>E-posta:</b> ${email}</p>
                   </div>
-                  <p>Hemen oyna: <a href="https://kuzgunkral.github.io/kuzgun-ticaret/" style="color:#58a6ff">Kapitalist</a></p>
+                  <p>Hemen oyna: <a href="https://kuzgunkral.github.io/kapitalist/" style="color:#58a6ff">Kapitalist</a></p>
                   <p style="color:#8b949e;font-size:12px;margin-top:20px">Kapitalist Ekibi</p>
                 </div>`
               })
