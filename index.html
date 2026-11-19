@@ -33909,6 +33909,9 @@ function borsaKapanisKaydet() {
     G.borsaKapanisFiyat[kod] = G.borsaHisse[kod].fiyat;
   }
   G.borsaKapanisZaman = Date.now();
+  var _ozet=[];var _n=0;
+  for (var kod2 in G.borsaKapanisFiyat){_ozet.push(kod2+' '+fmt(Math.round(G.borsaKapanisFiyat[kod2]))+' TL');_n++;}
+  log('📉 Borsa kapandı: '+_ozet.slice(0,5).join(', ')+(_n>5?' +'+(_n-5)+' hisse daha':''),'sy');
 }
 
 // Acilista kapanis fiyatindan devam et
@@ -33920,6 +33923,9 @@ function borsaAcilisUygula() {
       G.borsaHisse[kod].onceki = G.borsaKapanisFiyat[kod];
     }
   }
+  var _ozet=[];var _n2=0;
+  for (var kod2 in G.borsaKapanisFiyat){_ozet.push(kod2+' '+fmt(Math.round(G.borsaKapanisFiyat[kod2]))+' TL');_n2++;}
+  log('📈 Borsa açıldı - kapanıştan devam: '+_ozet.slice(0,5).join(', ')+(_n2>5?' +'+(_n2-5)+' hisse daha':''),'ok');
 }
 
 function borsaFiyatGuncelle() {
@@ -108626,6 +108632,7 @@ function klanIhaleKazandi(urun,tipKisiler,kazanilanTL,madalya) {
     log('⚔️ Klan XP: +'+xp+' ('+tipKisiler+' kişilik ihale)','ok');
   }
   klanLog('🏆 İhale kazanıldı: '+urun+' ('+tipKisiler+' kişilik) +'+fmt(kazanilanTL)+' TL'+(madalya?' '+madalya.emoji+madalya.ad:''),'ok');
+  log('🏆 Klan ihaleyi kazandı: '+urun+' ('+tipKisiler+' kişilik) +'+fmt(kazanilanTL)+' TL'+(madalya?' '+madalya.emoji+madalya.ad+' ile':''),'ok');
   if (!G.klan.ihaleler) G.klan.ihaleler=[];
   var t=new Date(); var ts=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0');
   var _ihMiktar=0;var _ihBazKazanc=0;var _ihLvBonus=0;
@@ -120407,6 +120414,7 @@ function ihracatTick(){
           var _netKarLog=Math.round(ih.gonderilen*(ih.birimFiyat*(1+_karMarji2/100)-_piyFiyat2));
           if(_netKarLog>0)G.ihracatToplamKar=(G.ihracatToplamKar||0)+_netKarLog;
           klanLog('📦 '+ih.urun+' ihracatı tamamlandı! '+_siralama+' +'+fmt(_netKarLog)+' TL'+(xpOdul>0?' +'+xpOdul+' XP':''),'ok');
+          log('📦 Klan ihracatı tamamlandı: '+ih.urun+' '+(_siralama||'')+' +'+fmt(_netKarLog)+' TL'+(xpOdul>0?' +'+xpOdul+' XP':''),'ok');
           if(G.klan.log.length>50)G.klan.log=G.klan.log.slice(0,50);
           // Klan XP: her ihracat +5 XP
           if(typeof klanSupaXpEkle==='function') klanSupaXpEkle(5);
