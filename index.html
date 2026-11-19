@@ -108362,16 +108362,8 @@ async function klanKatilSupa(klanId, klanAd) {
     var d = await r.json();
     if(d.hata) { log('⛔ ' + d.hata, 'er'); return; }
   } catch(e) { log('Sunucuya bağlanılamadı!','er'); return; }
-  G.klan.ad = klanAd;
-  G.klan.kuruldu = true;
-  G.klan.lider = '';
-  G.klan.uyeler = [];
-  save(); renderKlan();
-  if(typeof renderIhracat==='function') renderIhracat();
-  // Klana katilinca ihale otomatik ac
-  if(!G.ihaleLevel||G.ihaleLevel<1){G.ihaleLevel=1;G.ihaleKatilimBitis=0;G.ihaleKatilimOran=0;G.ihaleler=[];ihaleTick();if(typeof renderIhale==='function')renderIhale();}
   var m = document.getElementById('klanListesiModal'); if(m) m.remove();
-  log('⚔️ '+klanAd+' klanına katıldın!','ok');
+  log('📥 '+klanAd+' klanına katılım isteği gönderildi! Lider onaylayınca klana gireceksin.','ok');
 }
 
 function klandanCik() {
@@ -108558,6 +108550,10 @@ async function klanMesajGonder(mesaj) {
   if(inp)inp.value='';
   save();
   klanMesajlariYukle();
+  // Buluta gonder (diger uyeler gorsun)
+  try {
+    fetch(CF_API+'/klan/sohbet',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({mesaj:_temizMesaj})}).then(function(){klanSohbetBulutYukle();}).catch(function(){});
+  } catch(e){}
 }
 async function klanMesajlariYukle() {
   if(!G.klan||!G.klan.ad)return;
@@ -108750,10 +108746,120 @@ function klanBankaXpHesapla(tlMiktar) {
   if(xp > 0) klanSupaXpEkle(xp);
 }
 
-// Supabase'den klan bilgilerini yukle (her acilista)
+// Cloud D1'den klan bilgilerini yukle (uyeler + istekler + sohbet)
 async function klanSupaYukle() {
-  if(!G.klan||!G.klan.ad||true) return;
+  try {
+    var tok = localStorage.getItem('cf_token')||'';
+    if(!tok) return;
+    var r = await fetch(CF_API + '/klan/bilgi', {headers:{'Authorization':'Bearer '+tok}});
+    var d = await r.json();
+    if(d.klan) {
+      window._klanBulutUyeler = d.klan.uyeler || [];
+      window._klanBulutAd = d.klan.ad;
+      window._klanBulutRol = d.klan.benim_rolum;
+    } else {
+      window._klanBulutUyeler = [];
+      window._klanBulutRol = null;
+    }
+    var ist = [];
+    if(window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci'){
+      var r2 = await fetch(CF_API + '/klan/istekler', {headers:{'Authorization':'Bearer '+tok}});
+      var d2 = await r2.json();
+      ist = d2.istekler || [];
+    }
+    window._klanBulutIstekler = ist;
+    klanBulutRender();
+    klanSohbetBulutYukle();
+  } catch(e){}
 }
+
+// Bulut uye listesi + katilim isteklerini DOM'a doker
+function klanBulutRender() {
+  var istEl = document.getElementById('klanIsteklerBolumu');
+  if(istEl) {
+    var ist = window._klanBulutIstekler||[];
+    var h='';
+    if(ist.length) {
+      h+='<div style="border-top:1px solid #2e4060;padding-top:8px;margin-top:8px">';
+      h+='<div style="font-size:11px;font-weight:700;color:#f59e0b;margin-bottom:6px">📥 Katılım İstekleri ('+ist.length+')</div>';
+      ist.forEach(function(x){
+        var t=new Date(x.zaman); var ts=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0');
+        h+='<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;background:#2a1a05;border:1px solid #f59e0b;border-radius:6px;margin-bottom:3px">';
+        h+='<span style="font-size:11px;color:#d8e8f8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📥 '+x.oyuncu+' <span style="color:#6080a0;font-size:9px">'+ts+'</span></span>';
+        h+='<button onclick="klanIstekAksiyon(\''+x.id+'\',\'kabul\')" style="padding:2px 8px;background:#0a2e1a;color:#10b981;border:1px solid #10b981;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer">✔ Kabul</button>';
+        h+='<button onclick="klanIstekAksiyon(\''+x.id+'\',\'red\')" style="padding:2px 8px;background:#2a0505;color:#ef4444;border:1px solid #ef4444;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer">✖ Red</button>';
+        h+='</div>';
+      });
+      h+='</div>';
+    }
+    istEl.innerHTML=h;
+  }
+  var uyeEl = document.getElementById('klanBulutUyeListe');
+  if(uyeEl) {
+    var uy = window._klanBulutUyeler||[];
+    var h2='';
+    if(uy.length) {
+      h2+='<div style="border-top:1px solid #2e4060;padding-top:8px;margin-top:8px">';
+      h2+='<div style="font-size:11px;font-weight:700;color:#6aa0e0;margin-bottom:6px">🌐 Gerçek Oyuncular ('+uy.length+')</div>';
+      uy.forEach(function(u){
+        var _ik=u.rol==='lider'?'👑':u.rol==='yardimci'?'🥈':'👤';
+        var _rl=u.rol==='lider'?' (Lider)':u.rol==='yardimci'?' (Yrd.)':'';
+        var _benim=u.kullanici_adi===(G._oyuncuAdi||'Ben');
+        h2+='<div'+(_benim?'':' onclick="window._klanSeciliUye=\''+u.kullanici_adi+'\';var b=document.getElementById(\'klanUyeAksiyonBar\');if(b){b.style.display=\'flex\';document.getElementById(\'klanSeciliUyeAd\').textContent=\''+_ik+' '+u.kullanici_adi+'\';}"')+' class="klan-uye-row" style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:#202a42;border:1px solid #2e4060;border-radius:6px;margin-bottom:3px;cursor:pointer">';
+        h2+='<span>'+_ik+'</span>';
+        h2+='<span style="font-size:11px;color:'+(_benim?'#10b981':u.rol==='lider'?'#f59e0b':u.rol==='yardimci'?'#a78bfa':'#d8e8f8')+';flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+u.kullanici_adi+_rl+(_benim?' (Sen)':'')+'</span>';
+        h2+='</div>';
+      });
+      h2+='</div>';
+    } else {
+      h2='<div style="font-size:10px;color:#6080a0;margin-top:6px">🌐 Gerçek oyuncu listesi yükleniyor...</div>';
+    }
+    uyeEl.innerHTML=h2;
+  }
+}
+
+// Katilim istegi kabul/red
+async function klanIstekAksiyon(id, aksiyon) {
+  try {
+    var r=await fetch(CF_API+'/klan/istek',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({id:id,aksiyon:aksiyon})});
+    var d=await r.json();
+    if(d.hata){log('⛔ '+d.hata,'er');return;}
+    if(d.kabul) log('✔ '+(d.oyuncu||'Oyuncu')+' klana kabul edildi!','ok');
+    else log('✖ Katılım isteği reddedildi.','sy');
+  } catch(e){log('Sunucuya bağlanılamadı!','er');}
+  klanSupaYukle();
+}
+
+// Klan sohbetini buluttan cek, yerel listeye birlestir
+async function klanSohbetBulutYukle() {
+  if(!G.klan||!G.klan.ad) return;
+  try {
+    var tok=localStorage.getItem('cf_token')||'';
+    if(!tok) return;
+    var r=await fetch(CF_API+'/klan/sohbet',{headers:{'Authorization':'Bearer '+tok}});
+    var d=await r.json();
+    var _cl=d.mesajlar||[];
+    if(!_cl.length) return;
+    if(!G.klan.mesajlar)G.klan.mesajlar=[];
+    var _mevcut={};
+    G.klan.mesajlar.forEach(function(m){_mevcut[m.id]=1;});
+    var _degisti=false;
+    _cl.forEach(function(m){
+      if(!_mevcut[m.id]){G.klan.mesajlar.push({id:m.id,oyuncu:m.kullanici_adi,mesaj:m.mesaj,zaman:m.zaman});_degisti=true;}
+    });
+    if(_degisti){
+      G.klan.mesajlar.sort(function(a,b){return a.zaman-b.zaman;});
+      if(G.klan.mesajlar.length>60)G.klan.mesajlar=G.klan.mesajlar.slice(-60);
+      save();
+      klanMesajlariYukle();
+    }
+  } catch(e){}
+}
+
+// Klan paneli acikken bulut verilerini periyodik guncelle (uye/istek/sohbet)
+setInterval(function(){
+  if(document.getElementById('klanPanel')&&G.klan&&G.klan.kuruldu) klanSupaYukle();
+}, 12000);
 
 function renderKlan() {
   var el = document.getElementById('klanPanel'); if (!el) return;
@@ -108840,6 +108946,9 @@ function renderKlan() {
         h+='<span style="font-size:11px;color:'+(_uBan?'#fca5a5':_iy?'#a78bfa':_uSustur?'#f97316':'#d8e8f8')+';flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_u.isim+(_iy?' (Yrd.)':'')+(_uSustur?' (Susturuldu)':'')+(_uBan?' (Banlı)':'')+'</span>';
         h+='</div>';
       }
+      // Bulut: katilim istekleri + gercel oyuncular (klanSupaYukle doldurur)
+      h+='<div id="klanIsteklerBolumu"></div>';
+      h+='<div id="klanBulutUyeListe"></div>';
       // Banlı listesi
       var _banList=G.klan.banlilar||[];
       if(_banList.length>0){
@@ -108937,6 +109046,8 @@ function renderKlan() {
     klanMesajlariYukle();
     // Realtime: daha önce subscribe edildiyse iptal et
     window._klanSohbetChannel = null;
+    // Bulut: uye listesi, istekler ve sohbet guncelle
+    klanSupaYukle();
   }
 KRIPTO_LISTESI.forEach(function(k){
   var cv=document.getElementById('spk-'+k.id);if(!cv)return;

@@ -445,11 +445,72 @@ var index_default = {
         const { klan_id } = await request.json();
         const klan = await env.DB.prepare("SELECT id FROM klanlar WHERE id=?").bind(klan_id).first();
         if (!klan) return jsonResponse({ hata: "Klan bulunamadi" }, 404);
-        const now = Date.now();
-        await env.DB.prepare("INSERT INTO klan_uyeler (kullanici_id,klan_id,rol,katildi) VALUES (?,?,?,?)").bind(uid, klan_id, "uye", now).run();
+        await env.DB.prepare(
+          "CREATE TABLE IF NOT EXISTS klan_istekler (id TEXT PRIMARY KEY, kullanici_id TEXT, klan_id TEXT, zaman INTEGER)"
+        ).run();
+        const bekleyen = await env.DB.prepare("SELECT id FROM klan_istekler WHERE kullanici_id=? AND klan_id=?").bind(uid, klan_id).first();
+        if (bekleyen) return jsonResponse({ hata: "Bu klana zaten bekleyen bir isteginiz var" }, 400);
+        const baskaIstek = await env.DB.prepare("SELECT id FROM klan_istekler WHERE kullanici_id=?").bind(uid).first();
+        if (baskaIstek) return jsonResponse({ hata: "Baska bir klana zaten katilim isteginiz var" }, 400);
+        const uyeSayisi = await env.DB.prepare("SELECT COUNT(*) AS c FROM klan_uyeler WHERE klan_id=?").bind(klan_id).first();
+        if (uyeSayisi && uyeSayisi.c >= 30) return jsonResponse({ hata: "Klan dolu (30/30)" }, 400);
+        const istekId = crypto.randomUUID();
+        await env.DB.prepare("INSERT INTO klan_istekler (id,kullanici_id,klan_id,zaman) VALUES (?,?,?,?)").bind(istekId, uid, klan_id, Date.now()).run();
         const logId = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(logId, klan_id, k.kullanici_adi + " klana katildi", now).run();
-        return jsonResponse({ basarili: true });
+        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(logId, klan_id, k.kullanici_adi + " klana katilim istegi gonderdi", Date.now()).run();
+        return jsonResponse({ basarili: true, istek: true, mesaj: "Katilim istegi gonderildi, lider onaylamasi bekleniyor" });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    if (path === "/klan/istekler" && request.method === "GET") {
+      try {
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
+        if (!uyelik || (uyelik.rol !== "lider" && uyelik.rol !== "yardimci")) return jsonResponse({ istekler: [] });
+        await env.DB.prepare(
+          "CREATE TABLE IF NOT EXISTS klan_istekler (id TEXT PRIMARY KEY, kullanici_id TEXT, klan_id TEXT, zaman INTEGER)"
+        ).run();
+        const { results } = await env.DB.prepare(
+          "SELECT ki.id, ki.kullanici_id, ki.zaman, k.kullanici_adi AS oyuncu FROM klan_istekler ki JOIN kullanicilar k ON k.id=ki.kullanici_id WHERE ki.klan_id=? ORDER BY ki.zaman ASC"
+        ).bind(uyelik.klan_id).all();
+        return jsonResponse({ istekler: results || [], rol: uyelik.rol });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    if (path === "/klan/istek" && request.method === "POST") {
+      try {
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const { id, aksiyon } = await request.json();
+        if (!id || (aksiyon !== "kabul" && aksiyon !== "red")) return jsonResponse({ hata: "Gecersiz istek" }, 400);
+        await env.DB.prepare(
+          "CREATE TABLE IF NOT EXISTS klan_istekler (id TEXT PRIMARY KEY, kullanici_id TEXT, klan_id TEXT, zaman INTEGER)"
+        ).run();
+        const istek = await env.DB.prepare("SELECT * FROM klan_istekler WHERE id=?").bind(id).first();
+        if (!istek) return jsonResponse({ hata: "Istek bulunamadi (zaten islem yapilmis olabilir)" }, 404);
+        const benimUyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
+        if (!benimUyelik || benimUyelik.klan_id !== istek.klan_id || (benimUyelik.rol !== "lider" && benimUyelik.rol !== "yardimci"))
+          return jsonResponse({ hata: "Yetkiniz yok" }, 403);
+        const isteyen = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(istek.kullanici_id).first();
+        await env.DB.prepare("DELETE FROM klan_istekler WHERE id=?").bind(id).run();
+        if (aksiyon === "kabul") {
+          const zatenUye = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(istek.kullanici_id).first();
+          if (zatenUye) return jsonResponse({ hata: isteyen ? isteyen.kullanici_adi + " zaten bir klana uye" : "Oyuncu baska klana uye oldu" }, 400);
+          const uyeSayisi = await env.DB.prepare("SELECT COUNT(*) AS c FROM klan_uyeler WHERE klan_id=?").bind(istek.klan_id).first();
+          if (uyeSayisi && uyeSayisi.c >= 30) return jsonResponse({ hata: "Klan dolu (30/30)" }, 400);
+          await env.DB.prepare("INSERT INTO klan_uyeler (kullanici_id,klan_id,rol,katildi) VALUES (?,?,?,?)").bind(istek.kullanici_id, istek.klan_id, "uye", Date.now()).run();
+          const logId = crypto.randomUUID();
+          await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(logId, istek.klan_id, (isteyen ? isteyen.kullanici_adi : "Oyuncu") + " klana kabul edildi", Date.now()).run();
+          return jsonResponse({ basarili: true, kabul: true, oyuncu: isteyen ? isteyen.kullanici_adi : null });
+        }
+        const logId = crypto.randomUUID();
+        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(logId, istek.klan_id, (isteyen ? isteyen.kullanici_adi : "Oyuncu") + " klana katilim istegi reddedildi", Date.now()).run();
+        return jsonResponse({ basarili: true, kabul: false });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -503,7 +564,7 @@ var index_default = {
         if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
         const uyelik = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ mesajlar: [] });
-        const { results } = await env.DB.prepare("SELECT kullanici_adi,mesaj,zaman FROM klan_sohbet WHERE klan_id=? ORDER BY zaman ASC LIMIT 50").bind(uyelik.klan_id).all();
+        const { results } = await env.DB.prepare("SELECT id,kullanici_adi,mesaj,zaman FROM klan_sohbet WHERE klan_id=? ORDER BY zaman ASC LIMIT 50").bind(uyelik.klan_id).all();
         return jsonResponse({ mesajlar: results || [] });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
