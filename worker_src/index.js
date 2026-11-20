@@ -100,6 +100,7 @@ async function ekTablolar(env) {
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS online_durum (kullanici_adi TEXT PRIMARY KEY, son_aktif INTEGER)").run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS klan_banka_log (id TEXT PRIMARY KEY, klan_id TEXT, kullanici_adi TEXT, miktar REAL, tur TEXT, zaman INTEGER)").run();
   try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN klan_ceza_until INTEGER DEFAULT 0").run(); } catch (e) {}
+  try { await env.DB.prepare("ALTER TABLE klanlar ADD COLUMN elmas_banka INTEGER DEFAULT 0").run(); } catch (e) {}
 }
 __name(ekTablolar, "ekTablolar");
 async function adminMi(env, kadi) {
@@ -388,9 +389,9 @@ var index_default = {
         if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
         const uyelik = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 400);
-        const klanRow = await env.DB.prepare("SELECT banka FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
-        const { results: yatiranlar } = await env.DB.prepare("SELECT kullanici_adi, SUM(CASE WHEN tur='yatir' THEN miktar ELSE 0 END) AS yatirdigi, SUM(CASE WHEN tur='cek' THEN miktar ELSE 0 END) AS cektigi FROM klan_banka_log WHERE klan_id=? GROUP BY kullanici_adi ORDER BY yatirdigi DESC LIMIT 30").bind(uyelik.klan_id).all();
-        return jsonResponse({ basarili: true, banka: klanRow ? klanRow.banka : 0, yatiranlar: yatiranlar || [] });
+        const klanRow = await env.DB.prepare("SELECT banka, elmas_banka FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
+        const { results: yatiranlar } = await env.DB.prepare("SELECT kullanici_adi, SUM(CASE WHEN tur='yatir' THEN miktar ELSE 0 END) AS yatirdigi, SUM(CASE WHEN tur='cek' THEN miktar ELSE 0 END) AS cektigi, SUM(CASE WHEN tur='yatir_elmas' THEN miktar ELSE 0 END) AS yatirdigi_elmas, SUM(CASE WHEN tur='cek_elmas' THEN miktar ELSE 0 END) AS cektigi_elmas FROM klan_banka_log WHERE klan_id=? GROUP BY kullanici_adi ORDER BY yatirdigi DESC LIMIT 30").bind(uyelik.klan_id).all();
+        return jsonResponse({ basarili: true, banka: klanRow ? klanRow.banka : 0, elmas_banka: klanRow ? Math.round(klanRow.elmas_banka || 0) : 0, yatiranlar: yatiranlar || [] });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -405,16 +406,22 @@ var index_default = {
         const uyelik = await env.DB.prepare("SELECT klan_id, rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 400);
         if (uyelik.rol !== "lider" && uyelik.rol !== "yardimci") return jsonResponse({ hata: "Sadece klan lideri veya yardimcisi para cekebilir" }, 403);
-        const { miktar } = await request.json();
+        const { miktar, tur } = await request.json();
+        const _elmas = tur === "elmas";
         const m = Math.round(Number(miktar));
         if (!m || m <= 0) return jsonResponse({ hata: "Gecersiz miktar" }, 400);
-        const klanRow = await env.DB.prepare("SELECT banka FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
-        if (!klanRow || klanRow.banka < m) return jsonResponse({ hata: "Bankada yeterli para yok" }, 400);
-        await env.DB.prepare("UPDATE klanlar SET banka=banka-? WHERE id=?").bind(m, uyelik.klan_id).run();
-        await env.DB.prepare("INSERT INTO klan_banka_log (id,klan_id,kullanici_adi,miktar,tur,zaman) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi, m, "cek", Date.now()).run();
-        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi + " bankadan " + m + " TL cekti", Date.now()).run();
-        const yeni = await env.DB.prepare("SELECT banka FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
-        return jsonResponse({ basarili: true, banka: yeni ? yeni.banka : 0, cekilen: m });
+        const klanRow = await env.DB.prepare("SELECT banka, elmas_banka FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
+        const _bakiye = _elmas ? (klanRow ? Math.round(klanRow.elmas_banka || 0) : 0) : (klanRow ? klanRow.banka : 0);
+        if (!klanRow || _bakiye < m) return jsonResponse({ hata: _elmas ? "Bankada yeterli elmas yok" : "Bankada yeterli para yok" }, 400);
+        if (_elmas) {
+          await env.DB.prepare("UPDATE klanlar SET elmas_banka=elmas_banka-? WHERE id=?").bind(m, uyelik.klan_id).run();
+        } else {
+          await env.DB.prepare("UPDATE klanlar SET banka=banka-? WHERE id=?").bind(m, uyelik.klan_id).run();
+        }
+        await env.DB.prepare("INSERT INTO klan_banka_log (id,klan_id,kullanici_adi,miktar,tur,zaman) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi, m, _elmas ? "cek_elmas" : "cek", Date.now()).run();
+        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi + (_elmas ? " bankadan " + m + " elmas cekti" : " bankadan " + m + " TL cekti"), Date.now()).run();
+        const yeni = await env.DB.prepare("SELECT banka, elmas_banka FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
+        return jsonResponse({ basarili: true, banka: yeni ? yeni.banka : 0, elmas_banka: yeni ? Math.round(yeni.elmas_banka || 0) : 0, cekilen: m });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -1129,14 +1136,19 @@ var index_default = {
         const k = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(uid).first();
         const uyelik = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 400);
-        const { miktar } = await request.json();
+        const { miktar, tur } = await request.json();
+        const _elmas = tur === "elmas";
         const m = Math.round(Number(miktar));
         if (!m || m <= 0) return jsonResponse({ hata: "Gecersiz miktar" }, 400);
-        await env.DB.prepare("UPDATE klanlar SET banka=banka+? WHERE id=?").bind(m, uyelik.klan_id).run();
-        await env.DB.prepare("INSERT INTO klan_banka_log (id,klan_id,kullanici_adi,miktar,tur,zaman) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi, m, "yatir", Date.now()).run();
-        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi + " bankaya " + m + " TL yatirdi", Date.now()).run();
-        const klanRow = await env.DB.prepare("SELECT banka FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
-        return jsonResponse({ basarili: true, banka: klanRow ? klanRow.banka : null });
+        if (_elmas) {
+          await env.DB.prepare("UPDATE klanlar SET elmas_banka=elmas_banka+? WHERE id=?").bind(m, uyelik.klan_id).run();
+        } else {
+          await env.DB.prepare("UPDATE klanlar SET banka=banka+? WHERE id=?").bind(m, uyelik.klan_id).run();
+        }
+        await env.DB.prepare("INSERT INTO klan_banka_log (id,klan_id,kullanici_adi,miktar,tur,zaman) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi, m, _elmas ? "yatir_elmas" : "yatir", Date.now()).run();
+        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi + (_elmas ? " bankaya " + m + " elmas yatirdi" : " bankaya " + m + " TL yatirdi"), Date.now()).run();
+        const klanRow = await env.DB.prepare("SELECT banka, elmas_banka FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
+        return jsonResponse({ basarili: true, banka: klanRow ? klanRow.banka : null, elmas_banka: klanRow ? Math.round(klanRow.elmas_banka || 0) : 0 });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
