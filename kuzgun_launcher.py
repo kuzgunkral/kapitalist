@@ -10,6 +10,18 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CF_API = 'https://kapitalist-api.gitbaskabul.workers.dev'
 OTURUM_FILE = os.path.join(SCRIPT_DIR, '.oturum.json')
 URLS = {'oyun':'https://kuzgunkral.github.io/kapitalist/','gmail':'https://mail.google.com/mail/u/0/#inbox','cloudflare':'https://dash.cloudflare.com','github':'https://github.com/kuzgunkral/kapitalist','worker':'https://kapitalist-api.gitbaskabul.workers.dev'}
+
+def panel_admin_ol(token):
+    """Panel girisi yapan kullaniciyi admin yapar (moderasyon tablosunda admin=1)."""
+    if not token: return
+    try:
+        req = urllib.request.Request(CF_API+'/panel/admin-ol', data=b'{}',
+            headers={'Content-Type':'application/json','Authorization':'Bearer '+token}, method='POST')
+        with urllib.request.urlopen(req, timeout=10) as r:
+            json.loads(r.read())
+    except Exception:
+        pass
+
 BASLIKLAR = {'oyun':'Oyun','gmail':'Gmail','cloudflare':'Cloudflare','github':'GitHub','worker':'Worker API'}
 
 TAB_CSS = """
@@ -239,6 +251,7 @@ class MainWidget(QWidget):
             cf_token = getattr(self,'pending_cf_token','')
             cf_user = getattr(self,'pending_cf_user','')
             if cf_token and cf_user:
+                panel_admin_ol(cf_token)
                 js = "localStorage.setItem('cf_token','%s');localStorage.setItem('cf_kullanici','%s');" % (cf_token, cf_user)
                 v.load(QUrl(URLS[id]))
                 v.loadFinished.connect(lambda ok, _v=v, _js=js: _v.page().runJavaScript(_js + " location.reload();") if ok else None)
@@ -402,6 +415,7 @@ class KuzgunLauncher(QMainWindow):
                     if data.get('token'):
                         self.main.pending_cf_token = data.get('token','')
                         self.main.pending_cf_user = u
+                        panel_admin_ol(data.get('token',''))
         except: pass
         self.main.git('oyun')
 
