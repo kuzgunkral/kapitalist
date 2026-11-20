@@ -18623,6 +18623,44 @@ function klDavetSenk(){
     })
     .catch(function(){});
 }
+/*__PM_BILDIRIM__*/
+function pmBildirimSenk(){
+  var tok=localStorage.getItem('cf_token')||'';
+  if(!tok)return;
+  var since=parseInt(localStorage.getItem('_pmSonZaman')||String(Date.now()-300000),10)||0;
+  fetch(CF_API+'/dm/bildirim?since='+since,{headers:{'Authorization':'Bearer '+tok}})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.hata||!(d.bildirimler||[]).length)return;
+    var _max=since;
+    (d.bildirimler||[]).forEach(function(b){if((b.zaman||0)>_max)_max=b.zaman;});
+    try{localStorage.setItem('_pmSonZaman',String(_max));}catch(e){}
+    if(!window._pmBildirimGorulen)window._pmBildirimGorulen={};
+    d.bildirimler.slice().reverse().forEach(function(b){
+      var _key=(b.gonderen||'')+'_'+(b.zaman||0);
+      if(window._pmBildirimGorulen[_key])return;
+      window._pmBildirimGorulen[_key]=1;
+      pmBaloncukGoster(b.gonderen,b.mesaj);
+    });
+  }).catch(function(){});
+}
+function pmBaloncukGoster(kadi,mesaj){
+  var old=document.getElementById('pmBaloncuk');if(old)old.remove();
+  if(!document.getElementById('pmBlinkStyle')){
+    var s=document.createElement('style');s.id='pmBlinkStyle';
+    s.textContent='@keyframes pmBlink{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,.35)}50%{box-shadow:0 0 14px 5px rgba(16,185,129,.55)}}@media (prefers-reduced-motion: reduce){#pmBaloncuk{animation:none!important}}';
+    document.head.appendChild(s);
+  }
+  var b=document.createElement('div');b.id='pmBaloncuk';
+  b.style.cssText='position:fixed;right:16px;bottom:80px;z-index:99996;background:#0a1628;border:2px solid #10b981;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:260px;cursor:pointer;animation:pmBlink 1.2s ease-in-out infinite';
+  b.innerHTML='<div style="font-size:12px;font-weight:800;color:#10b981">💬 '+kadi+'</div>'
+    +'<div style="font-size:11px;color:#d8e8f8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+String(mesaj||'').substring(0,60)+'</div>';
+  b.onclick=function(){b.remove();gDMPopup(kadi);};
+  document.body.appendChild(b);
+  setTimeout(function(){var el=document.getElementById('pmBaloncuk');if(el&&el===b)el.remove();},30000);
+}
+setInterval(pmBildirimSenk,30000);
+setTimeout(pmBildirimSenk,2000);
 function klDavetBannerGoster(davetler){
   var old=document.getElementById('klanDavetPopup');if(old)old.remove();
   if(!(davetler||[]).length)return;
@@ -18780,6 +18818,16 @@ function gDMGonder(kadi){
 function klDavetEt(kadi){
   var btn=document.getElementById('_dmDavetBtn');
   function _reset(){if(btn){btn.disabled=false;btn.textContent='⚔️ Klana Davet Et';}}
+  // Zaten klanda mi kontrolu (sunucuya gitmeden)
+  if(window._klanBulutAd&&(window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci')){
+    var _zaten=false;
+    (window._klanBulutUyeler||[]).forEach(function(u){if(u.kullanici_adi===kadi)_zaten=true;});
+    if(_zaten){
+      log('ℹ️ '+kadi+' zaten klanında!','sy');
+      if(btn){btn.disabled=true;btn.textContent='✔ Zaten klanda';btn.style.color='#f59e0b';btn.style.borderColor='#f59e0b';setTimeout(function(){var p=document.getElementById('dmPopup');if(p)p.remove();},2000);}
+      return;
+    }
+  }
   if(!confirm(kadi+' klana davet edilsin mi?')){_reset();return;}
   if(btn){btn.disabled=true;btn.textContent='⏳ Gönderiliyor...';}
   fetch(CF_API+'/klan/davet',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({hedef:kadi})})
@@ -108902,7 +108950,8 @@ async function klanMesajlariYukle() {
   if(!G.klan||!G.klan.ad)return;
   var el=document.getElementById('klanSohbetList');
   if(!el)return;
-  var _isYon=(window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci')||(G.klan.lider===_oyAdi||G.klan.lider==='Ben'||G.klan.lider==='Sen')||(G.klan.yardimci&&(G.klan.yardimci===_oyAdi||G.klan.yardimci==='Ben'));
+  var _oyAdi=G._oyuncuAdi||'Ben';
+  var _isYon=window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci';
   var h='';
   var _msj=(G.klan.mesajlar||[]).slice(-30);
   _msj.forEach(function(m){
@@ -109124,7 +109173,7 @@ async function klanSupaYukle() {
       window._klanBulutAd = d.klan.ad;
       window._klanBulutRol = d.klan.benim_rolum;
       // Rol ilk kez geldi veya değişti ise paneli tazele (yönetici butonları için)
-      if(_rolOnce!==window._klanBulutRol && typeof renderKlan==='function'){ setTimeout(renderKlan,50); }
+      if(window._klanBulutRol && _rolOnce!==window._klanBulutRol && typeof renderKlan==='function'){ setTimeout(renderKlan,50); }
       window._klanBulutBanka = Math.round(d.klan.banka||0);
       window._klanBulutBanlilar = d.klan.banlilar || [];
       window._klanBulutLog = d.klan.log || [];

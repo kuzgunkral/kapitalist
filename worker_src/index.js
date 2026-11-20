@@ -508,6 +508,22 @@ var index_default = {
       }
     }
     /*__EK_ENDPOINTLER4__*/
+    if (path === "/dm/bildirim" && request.method === "GET") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        const since = parseInt(url.searchParams.get("since") || "0", 10) || 0;
+        const { results } = await env.DB.prepare(
+          "SELECT gonderen, mesaj, zaman FROM dm WHERE alici=? AND zaman>? ORDER BY zaman DESC LIMIT 20"
+        ).bind(benim, since).all();
+        return jsonResponse({ bildirimler: results || [] });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
     if (path === "/klan/davet" && request.method === "POST") {
       try {
         await ekTablolar(env);
