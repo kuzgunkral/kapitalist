@@ -18618,23 +18618,31 @@ function klDavetSenk(){
         });
         klDavetBannerGoster(dv);
       } else {
-        var b=document.getElementById('klanDavetBanner');if(b)b.remove();
+        var b=document.getElementById('klanDavetPopup');if(b)b.remove();
       }
     })
     .catch(function(){});
 }
 function klDavetBannerGoster(davetler){
-  var old=document.getElementById('klanDavetBanner');if(old)old.remove();
+  var old=document.getElementById('klanDavetPopup');if(old)old.remove();
   if(!(davetler||[]).length)return;
   var _klansiz=true;try{_klansiz=!(window.G&&G.klan&&G.klan.kuruldu);}catch(e){}
   if(!_klansiz)return;
   var d=davetler[0];
-  var b=document.createElement('div');b.id='klanDavetBanner';
-  b.style.cssText='position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:99997;background:#1a0f2a;border:1px solid #7c3aed;border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.4);max-width:92vw;box-sizing:border-box;flex-wrap:wrap;justify-content:center';
-  b.innerHTML='<span style="font-size:12px;color:#d8e8f8">📥 <b style="color:#a78bfa">'+d.gonderen+'</b> sizi <b style="color:#a78bfa">"'+d.ad+'"</b> klanına davet etti</span>'
-    +'<button onclick="klDavetKarar(\''+d.id+'\',\'kabul\')" style="padding:4px 12px;background:#0a2e1a;color:#10b981;border:1px solid #10b981;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✔ Kabul</button>'
-    +'<button onclick="klDavetKarar(\''+d.id+'\',\'red\')" style="padding:4px 12px;background:#1a0505;color:#ef4444;border:1px solid #ef4444;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✖ Red</button>';
-  document.body.appendChild(b);
+  var p=document.createElement('div');p.id='klanDavetPopup';
+  p.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99998;display:flex;align-items:center;justify-content:center';
+  p.innerHTML='<div style="background:#0a1628;border:1px solid #7c3aed;border-radius:12px;padding:20px;max-width:340px;width:92%;box-sizing:border-box;text-align:center">'
+    +'<div style="font-size:36px;margin-bottom:8px">📥</div>'
+    +'<div style="font-size:14px;font-weight:800;color:#a78bfa;margin-bottom:6px">Klan Daveti</div>'
+    +'<div style="font-size:12px;color:#d8e8f8;margin-bottom:14px"><b style="color:#a78bfa">'+d.gonderen+'</b> sizi <b style="color:#a78bfa">"'+d.ad+'"</b> klanına davet etti.<br><span style="font-size:11px;color:#6080a0">Kabul edersen klana katılırsın.</span></div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button onclick="klDavetKarar(\''+d.id+'\',\'kabul\')" style="flex:1;padding:8px;background:#0a2e1a;color:#10b981;border:1px solid #10b981;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✔ Kabul Et</button>'
+    +'<button onclick="klDavetKarar(\''+d.id+'\',\'red\')" style="flex:1;padding:8px;background:#1a0505;color:#ef4444;border:1px solid #ef4444;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✖ Reddet</button>'
+    +'</div>'
+    +'<div onclick="document.getElementById(\'klanDavetPopup\').remove()" style="margin-top:8px;font-size:11px;color:#6080a0;cursor:pointer">Şu an değil</div>'
+    +'</div>';
+  document.body.appendChild(p);
+  p.onclick=function(e){if(e.target===p)p.remove();};
 }
 // Global online heartbeat: her 60 sn'de sunucuya ping, online listesi tazelenir
 setInterval(function(){
@@ -18678,6 +18686,9 @@ function klDavetKarar(id,aksiyon){
     if(aksiyon==='kabul'&&x.d.klan&&x.d.klan.ad){
       G.klan.ad=x.d.klan.ad;G.klan.kuruldu=true;G.klan.uyeler=G.klan.uyeler||[];
       G.klan.xp=G.klan.xp||0;G.klan.seviye=G.klan.seviye||1;
+      // Yeni klana normal üye olarak girilir: eski yönetici state'leri temizlenir
+      G.klan.lider=null;G.klan.yardimci=null;G.klan.susturulanlar={};G.klan.banka=0;G.klan.log=[];
+      window._klanBulutRol='uye';
       log('⚔️ "'+x.d.klan.ad+'" klanına katıldın!','ok');
       try{localStorage.removeItem('_klanUyeCache');}catch(e){}
       save();renderKlan();klanSupaYukle();
@@ -18685,7 +18696,7 @@ function klDavetKarar(id,aksiyon){
       log('Davet reddedildi.','sy');
     }
     gDavetRender([]);
-    var _b=document.getElementById('klanDavetBanner');if(_b)_b.remove();
+    var _b=document.getElementById('klanDavetPopup');if(_b)_b.remove();
     if(window.klDavetSenk)setTimeout(klDavetSenk,300);
   })
   .catch(function(){log('Sunucuya bağlanılamadı','er');});
@@ -108731,27 +108742,44 @@ async function klanBankaYatir(miktar){
   if(typeof klanBankaXpHesapla==='function') klanBankaXpHesapla(miktar);
   save();renderKlan();renderHeader();
 }
-async function klanBankaCek(){
+async function klanBankaCek(m){
   if(!G.klan||!G.klan.kuruldu){log('Önce klan kur!','er');return;}
   var _rol=window._klanBulutRol;
-  var _yn=_rol==='lider'||_rol==='yardimci'||(G.klan.lider===(G._oyuncuAdi||'Ben'))||(G.klan.yardimci&&(G.klan.yardimci===(G._oyuncuAdi||'Ben')||G.klan.yardimci==='Ben'));
+  var _yn=_rol==='lider'||_rol==='yardimci';
   if(!_yn){log('⛔ Sadece klan lideri veya yardımcısı para çekebilir!','er');return;}
-  var s=prompt('Bankadan ne kadar çekilsin? (Mevcut: '+fmt(Math.round(G.klan.banka||0))+' TL)','10000');
-  if(!s)return;
-  var m=Math.round(parseFloat(s)||0);
-  if(m<=0){log('Geçersiz miktar!','er');return;}
-  try{
-    var r=await fetch(CF_API+'/klan/banka-cek',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({miktar:m})});
-    var d=await r.json();
-    if(d.hata){log('⛔ '+d.hata,'er');return;}
-    window._klanBulutBanka=d.banka;
-    if(G.klan)G.klan.banka=d.banka;
-    G.money=(G.money||0)+m;
-    log('💵 Klan bankasından '+fmt(m)+' TL çektin. Banka: '+fmt(Math.round(G.klan.banka||0))+' TL','ok');
-    klanLog('💵 '+(G._oyuncuAdi||'Sen')+' bankadan '+fmt(m)+' TL çekti. Banka: '+fmt(Math.round(G.klan.banka||0))+' TL','bagis');
-    save();renderKlan();renderHeader();
-    if(G._klanBankaDetay)klanBankaDetayYukle();
-  }catch(e){log('Sunucuya bağlanılamadı!','er');}
+  m=Math.round(parseFloat(m)||0);
+  var _banka=Math.round(window._klanBulutBanka!=null&&window._klanBulutBanka!==undefined?window._klanBulutBanka:(G.klan.banka||0));
+  if(m<=0){log('⛔ Lütfen miktar kutusuna çekmek istediğiniz tutarı yazın!','er');return;}
+  if(m>_banka){log('⛔ Bankada yeterli para yok! Mevcut: '+fmt(_banka)+' TL','er');return;}
+  // Onay modalı — miktar yazılamaz, sadece bilgi + onay
+  var _old=document.getElementById('klanCekOnay');if(_old)_old.remove();
+  var p=document.createElement('div');p.id='klanCekOnay';
+  p.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center';
+  p.innerHTML='<div style="background:#202a42;border:1px solid #f59e0b;border-radius:12px;padding:24px;max-width:360px;width:92%;box-sizing:border-box;text-align:center">'
+    +'<div style="font-size:32px;margin-bottom:8px">💵</div>'
+    +'<div style="font-size:15px;font-weight:800;color:#f59e0b;margin-bottom:8px">Klan Bankasından Çekim</div>'
+    +'<div style="font-size:13px;color:#d8e8f8;margin-bottom:14px"><b style="color:#f59e0b">'+fmt(m)+' TL</b> çekmek istediğinizden emin misiniz?<br><span style="font-size:11px;color:#6080a0">Klan bankası: '+fmt(_banka)+' TL</span></div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button id="_klanCekOk" style="flex:1;padding:8px;background:#0a2e1a;color:#10b981;border:1px solid #10b981;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✔ Onayla</button>'
+    +'<button onclick="document.getElementById(\'klanCekOnay\').remove()" style="flex:1;padding:8px;background:#2a0505;color:#ef4444;border:1px solid #ef4444;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✖ İptal</button>'
+    +'</div></div>';
+  document.body.appendChild(p);
+  p.onclick=function(e){if(e.target===p)p.remove();};
+  document.getElementById('_klanCekOk').onclick=async function(){
+    p.remove();
+    try{
+      var r=await fetch(CF_API+'/klan/banka-cek',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({miktar:m})});
+      var d=await r.json();
+      if(d.hata){log('⛔ '+d.hata,'er');return;}
+      window._klanBulutBanka=d.banka;
+      if(G.klan)G.klan.banka=d.banka;
+      G.money=(G.money||0)+m;
+      log('💵 Klan bankasından '+fmt(m)+' TL çektin. Banka: '+fmt(Math.round(G.klan.banka||0))+' TL','ok');
+      klanLog('💵 '+(G._oyuncuAdi||'Sen')+' bankadan '+fmt(m)+' TL çekti. Banka: '+fmt(Math.round(G.klan.banka||0))+' TL','bagis');
+      save();renderKlan();renderHeader();
+      if(G._klanBankaDetay)klanBankaDetayYukle();
+    }catch(e){log('Sunucuya bağlanılamadı!','er');}
+  };
 }
 function klanBankaDetayAcKapa(){
   G._klanBankaDetay=!G._klanBankaDetay;
@@ -108797,7 +108825,9 @@ async function klanYardimciAta(isim) {
 }
 function klanLiderYap(isim) {
   if(!isim){log('Üye seçin!','er');return;}
-  if(G.klan.yardimci!==isim){log('Önce bu kişiyi asist yapmalısın!','er');return;}
+  var _yrd=false;
+  (window._klanBulutUyeler||[]).forEach(function(u){if(u.kullanici_adi===isim&&u.rol==='yardimci')_yrd=true;});
+  if(!_yrd){log('Önce bu kişiyi asist yapmalısın!','er');return;}
   var popup = document.createElement('div');
   popup.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;';
   popup.innerHTML = '<div style="background:#202a42;border:2px solid #f59e0b;border-radius:14px;padding:28px;max-width:380px;text-align:center">'
@@ -109089,9 +109119,12 @@ async function klanSupaYukle() {
     var r = await fetch(CF_API + '/klan/bilgi', {headers:{'Authorization':'Bearer '+tok}});
     var d = await r.json();
     if(d.klan) {
+      var _rolOnce=window._klanBulutRol;
       window._klanBulutUyeler = d.klan.uyeler || [];
       window._klanBulutAd = d.klan.ad;
       window._klanBulutRol = d.klan.benim_rolum;
+      // Rol ilk kez geldi veya değişti ise paneli tazele (yönetici butonları için)
+      if(_rolOnce!==window._klanBulutRol && typeof renderKlan==='function'){ setTimeout(renderKlan,50); }
       window._klanBulutBanka = Math.round(d.klan.banka||0);
       window._klanBulutBanlilar = d.klan.banlilar || [];
       window._klanBulutLog = d.klan.log || [];
@@ -109104,11 +109137,13 @@ async function klanSupaYukle() {
       // Sunucu uyelik dondurmedi: klandan cikarilmis -> local state temizle
       if(window._klanBulutAd){
         window._klanBulutAd = null;
+        window._klanBulutRol = null;
         window._klanBulutBanka = 0;
         window._klanBulutBanlilar = [];
         window._klanBulutLog = [];
         window._klanBulutIstekler = [];
-        if(G.klan){ G.klan.kuruldu=false; G.klan.ad=''; G.klan.banka=0; G.klan.uyeler=[]; G.klan.log=[]; }
+        window._klanBulutUyeler = [];
+        if(G.klan){ G.klan.kuruldu=false; G.klan.ad=''; G.klan.banka=0; G.klan.uyeler=[]; G.klan.log=[]; G.klan.lider=null; G.klan.yardimci=null; G.klan.susturulanlar={}; }
         try{ save(); }catch(e){}
         log('🚪 Klandan çıkarıldınız.','er');
         renderKlan();
@@ -109251,14 +109286,17 @@ setInterval(function(){
 }, 12000);
 
 function renderKlan() {
+  try { _renderKlanIc(); } catch(e) { console.error('renderKlan hatası:', e); try{log('⚠️ Klan panelinde hata: '+(e.message||e),'er');}catch(_e){} }
+}
+function _renderKlanIc() {
   var el = document.getElementById('klanPanel'); if (!el) return;
   klanInit(); klanTabLvGuncelle();
   // Supabase'den guncel klan bilgilerini yukle
   if(typeof klanSupaYukle==='function') klanSupaYukle();
   var _oyAdi=G._oyuncuAdi||'Ben';
-  var _isLider=(window._klanBulutRol==='lider')||(G.klan&&(G.klan.lider===_oyAdi||G.klan.lider==='Ben'||G.klan.lider==='Sen'))||false;
-  var _isYonetici=_isLider||window._klanBulutRol==='yardimci'||(G.klan&&G.klan.yardimci&&(G.klan.yardimci===_oyAdi||G.klan.yardimci==='Ben'));
-  var h='';
+  // Yönetici tespiti SADECE sunucu rolünden — local G.klan.lider ('Sen'/'Ben' kalıntısı) güvenilmez
+  var _isLider=window._klanBulutRol==='lider';
+  var _isYonetici=window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci';
   var h='';
   h+='<div style="max-width:680px;margin:0 auto;padding:8px">';
   if (!G.klan.kuruldu) {
@@ -109309,7 +109347,7 @@ function renderKlan() {
     h+='<input type="number" id="klanBagisInpKart" min="1" value="10000" style="width:90px;padding:3px 6px;background:#202a42;border:1px solid #283858;border-radius:5px;color:#d8e8f8;font-size:12px" onclick="event.stopPropagation()">';
     h+='<span style="font-size:11px;color:#6080a0">TL</span>';
     h+='<button onclick="event.stopPropagation();klanBankaYatir(parseFloat(document.getElementById(\'klanBagisInpKart\').value))" style="padding:4px 10px;background:#0a2e1a;color:#10b981;border:1px solid #10b981;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">💰 Yatır</button>';
-    if(_isYonetici)h+='<button onclick="event.stopPropagation();klanBankaCek()" style="padding:4px 10px;background:#1a0f05;color:#f59e0b;border:1px solid #f59e0b;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">💵 Çek</button>';
+    if(_isYonetici)h+='<button onclick="event.stopPropagation();klanBankaCek(document.getElementById(\'klanBagisInpKart\')?parseFloat(document.getElementById(\'klanBagisInpKart\').value):0)" style="padding:4px 10px;background:#1a0f05;color:#f59e0b;border:1px solid #f59e0b;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">💵 Çek</button>';
     h+='</div>';
     h+='<div onclick="event.stopPropagation();klanBankaDetayAcKapa()" style="width:100%;margin-top:6px;font-size:10px;color:#6080a0;cursor:pointer;text-align:center">👥 Kim ne kadar yatırdı? '+(G._klanBankaDetay?'▲':'▼')+'</div>';
     h+='<div id="klanBankaDetay" style="display:'+(G._klanBankaDetay?'block':'none')+';width:100%;margin-top:6px;font-size:11px;color:#d8e8f8"></div>';
