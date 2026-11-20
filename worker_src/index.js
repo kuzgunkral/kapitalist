@@ -406,7 +406,11 @@ var index_default = {
         if (!uid) return jsonResponse({ admin: false, seviye: 0 });
         const benim = await kadiBul(env, uid);
         const seviye = ADMINLAR.indexOf(benim) >= 0 ? 2 : (await modGet(env, benim)).admin === 1 ? 1 : 0;
-        return jsonResponse({ admin: seviye > 0, seviye, benim });
+        const benimMod = await modGet(env, benim);
+        await klanModTabloOlustur(env);
+        const benimKm = await env.DB.prepare("SELECT MAX(mute_until) AS mu FROM klan_mod WHERE kullanici_id=(SELECT id FROM kullanicilar WHERE kullanici_adi=?)").bind(benim).first();
+        const globalMute = Math.max(benimMod.mute_until || 0, (benimKm && benimKm.mu) || 0);
+        return jsonResponse({ admin: seviye > 0, seviye, benim, mute_until: globalMute, mute: globalMute > Date.now() });
       } catch (e) {
         return jsonResponse({ admin: false, seviye: 0 });
       }
@@ -476,7 +480,8 @@ var index_default = {
         const { results: uyeler } = await env.DB.prepare("SELECT k.kullanici_adi, ku.rol, COALESCE(km.ban,0) AS ban, COALESCE(km.mute_until,0) AS mute_until FROM klan_uyeler ku JOIN kullanicilar k ON k.id=ku.kullanici_id LEFT JOIN klan_mod km ON km.klan_id=ku.klan_id AND km.kullanici_id=ku.kullanici_id WHERE ku.klan_id=? ORDER BY CASE ku.rol WHEN 'lider' THEN 0 WHEN 'yardimci' THEN 1 ELSE 2 END, ku.katildi ASC").bind(uyelik.klan_id).all();
         const { results: log } = await env.DB.prepare("SELECT mesaj,zaman FROM klan_log WHERE klan_id=? ORDER BY zaman DESC LIMIT 20").bind(uyelik.klan_id).all();
         const { results: banlilar } = await env.DB.prepare("SELECT k.kullanici_adi FROM klan_mod km JOIN kullanicilar k ON k.id=km.kullanici_id WHERE km.klan_id=? AND km.ban=1").bind(uyelik.klan_id).all();
-        return jsonResponse({ klan: { ...klan, lider: lider ? lider.kullanici_adi : "?", uyeler: uyeler || [], log: log || [], banlilar: banlilar || [], benim_rolum: uyelik.rol } });
+        const benimMod = await klanModGet(env, uyelik.klan_id, uid);
+        return jsonResponse({ klan: { ...klan, lider: lider ? lider.kullanici_adi : "?", uyeler: uyeler || [], log: log || [], banlilar: banlilar || [], benim_rolum: uyelik.rol, benim_mute: benimMod.mute_until || 0 } });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -838,6 +843,52 @@ var index_default = {
         return jsonResponse({ hata: e.message }, 500);
       }
     }
+    if (path === "/klan/sohbet/sil" && request.method === "DELETE") {
+      try {
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
+        if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 400);
+        const k = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(uid).first();
+        const yonetici = uyelik.rol === "lider" || uyelik.rol === "yardimci";
+        const body = await request.json();
+        let silinen = 0;
+        if (body.id) {
+          const mesaj = await env.DB.prepare("SELECT id,kullanici_adi FROM klan_sohbet WHERE id=? AND klan_id=?").bind(body.id, uyelik.klan_id).first();
+          if (!mesaj) return jsonResponse({ hata: "Mesaj bulunamadi" }, 404);
+          if (!yonetici && mesaj.kullanici_adi !== k.kullanici_adi) return jsonResponse({ hata: "Baskasinin mesajini silme yetkiniz yok" }, 403);
+          const r1 = await env.DB.prepare("DELETE FROM klan_sohbet WHERE id=?").bind(body.id).run();
+          silinen = r1.meta ? r1.meta.changes : 0;
+        } else if (Array.isArray(body.ids)) {
+          for (const mid of body.ids) {
+            const mesaj = await env.DB.prepare("SELECT kullanici_adi FROM klan_sohbet WHERE id=? AND klan_id=?").bind(mid, uyelik.klan_id).first();
+            if (mesaj && (yonetici || mesaj.kullanici_adi === k.kullanici_adi)) {
+              const r1 = await env.DB.prepare("DELETE FROM klan_sohbet WHERE id=?").bind(mid).run();
+              silinen += r1.meta ? r1.meta.changes : 0;
+            }
+          }
+        }
+        if (!silinen) return jsonResponse({ hata: "Mesaj silinemedi (yetkiniz yok)" }, 403);
+        return jsonResponse({ basarili: true, silinen });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    if (path === "/klan/sohbet/temizle" && request.method === "DELETE") {
+      try {
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
+        if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 400);
+        if (uyelik.rol !== "lider" && uyelik.rol !== "yardimci") return jsonResponse({ hata: "Bu islem icin lider veya yardimci olmalisiniz" }, 403);
+        await env.DB.prepare("DELETE FROM klan_sohbet WHERE klan_id=?").bind(uyelik.klan_id).run();
+        return jsonResponse({ basarili: true });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
     if (path === "/klan/sohbet/gonder" && request.method === "POST") {
       try {
         const token = tokenFromRequest(request);
@@ -862,7 +913,7 @@ var index_default = {
         if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
         const uyelik = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ mesajlar: [] });
-        const { results } = await env.DB.prepare("SELECT kullanici_adi,mesaj,zaman FROM klan_sohbet WHERE klan_id=? ORDER BY zaman DESC LIMIT 50").bind(uyelik.klan_id).all();
+        const { results } = await env.DB.prepare("SELECT id,kullanici_adi,mesaj,zaman FROM klan_sohbet WHERE klan_id=? ORDER BY zaman DESC LIMIT 50").bind(uyelik.klan_id).all();
         return jsonResponse({ mesajlar: (results || []).reverse() });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);

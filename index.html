@@ -18486,7 +18486,10 @@ function gYetkiCek(){
   _gYetki._t=Date.now();
   fetch(CF_API+'/yetki',{headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}})
   .then(function(r){return r.json();})
-  .then(function(d){_gYetki.admin=!!d.admin;_gYetki.seviye=d.seviye||0;gYetkiUI();})
+  .then(function(d){
+    _gYetki.admin=!!d.admin;_gYetki.seviye=d.seviye||0;gYetkiUI();
+    if(d.mute===true&&!_gMute)sohbetMuteKilitle();
+  })
   .catch(function(){});
 }
 function gYetkiUI(){
@@ -18538,6 +18541,12 @@ function sohbetYukle(){
     if(atBottom)el.scrollTop=el.scrollHeight;
   }).catch(function(){});
 }
+function sohbetMuteKilitle(){
+  _gMute=true;
+  var b=document.getElementById("gMuteBtn");if(b){b.textContent="Unmute";b.style.color="#ef4444";b.style.borderColor="#ef4444";}
+  var w=document.getElementById("sohbet-inp-wrap");
+  if(w){w.innerHTML='<div style="flex:1;padding:7px 10px;background:#1a0f05;border:1px solid #f97316;border-radius:8px;color:#f97316;font-size:12px;text-align:center">🔇 Susturuldunuz — yönetici sizi susturdu, mesaj gönderemezsiniz</div>';}
+}
 function sohbetGonder(){
   var inp=document.getElementById("sohbet-inp");
   if(!inp||!inp.value.trim()||_gMute||_gKapali)return;
@@ -18546,7 +18555,7 @@ function sohbetGonder(){
   inp.value="";
   fetch(CF_API+'/sohbet',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({kullanici_adi:kadi,mesaj:msg})})
   .then(function(r){return r.json().then(function(d){return {ok:r.ok,hata:d.hata};});})
-  .then(function(x){if(x.ok){sohbetYukle();}else{log('🚫 Sohbet: '+(x.hata||'Gonderilemedi'),'er');}})
+  .then(function(x){if(x.ok){sohbetYukle();}else{log('🚫 Sohbet: '+(x.hata||'Gonderilemedi'),'er');if((x.hata||'').indexOf('Susturuldunuz')>=0)sohbetMuteKilitle();}})
   .catch(function(e){console.warn("sohbet gonder hata:",e);});
 }
 
@@ -108550,22 +108559,30 @@ function kufurFiltrele(metin) {
 }
 async function klanMesajGonder(mesaj) {
   if(!mesaj||!mesaj.trim()){return;}
-  var _sustur=G.klan&&G.klan.susturulanlar&&G.klan.susturulanlar[G._oyuncuAdi||'Ben']&&Date.now()<G.klan.susturulanlar[G._oyuncuAdi||'Ben'];
+  var _sustur=(window._klanBenMute===true)||(G.klan&&G.klan.susturulanlar&&G.klan.susturulanlar[G._oyuncuAdi||'Ben']&&Date.now()<G.klan.susturulanlar[G._oyuncuAdi||'Ben']);
   if(_sustur){log('🔇 Susturuldunuz, mesaj gönderemezsiniz!','er');return;}
   if(!G.klan||!G.klan.ad){log('Klan gerekli!','er');return;}
   var _oyAdi=G._oyuncuAdi||'Ben';
   var _temizMesaj = kufurFiltrele(mesaj.trim());
-  if(!G.klan.mesajlar)G.klan.mesajlar=[];
-  G.klan.mesajlar.push({id:'m'+Date.now(),oyuncu:_oyAdi,mesaj:_temizMesaj,zaman:Date.now()});
-  if(G.klan.mesajlar.length>30)G.klan.mesajlar=G.klan.mesajlar.slice(-30);
   var inp=document.getElementById('klanSohbetInp');
   if(inp)inp.value='';
-  save();
-  klanMesajlariYukle();
-  // Buluta gonder (diger uyeler gorsun)
+  // Once buluta gonder; sunucu onaylamadan yerel listeye ekleme
   try {
-    fetch(CF_API+'/klan/sohbet',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({mesaj:_temizMesaj})}).then(function(){klanSohbetBulutYukle();}).catch(function(){});
-  } catch(e){}
+    var r=await fetch(CF_API+'/klan/sohbet',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({mesaj:_temizMesaj})});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok){
+      log('🚫 Klan Sohbeti: '+(d.hata||'Gonderilemedi'),'er');
+      if((d.hata||'').indexOf('Susturuldunuz')>=0){window._klanBenMute=true;renderKlan();}
+      return;
+    }
+    klanSohbetBulutYukle();
+  } catch(e){
+    // Sunucuya ulasilamiyor: yerel fallback
+    if(!G.klan.mesajlar)G.klan.mesajlar=[];
+    G.klan.mesajlar.push({id:'m'+Date.now(),oyuncu:_oyAdi,mesaj:_temizMesaj,zaman:Date.now()});
+    if(G.klan.mesajlar.length>30)G.klan.mesajlar=G.klan.mesajlar.slice(-30);
+    save(); klanMesajlariYukle();
+  }
 }
 async function klanMesajlariYukle() {
   if(!G.klan||!G.klan.ad)return;
@@ -108604,6 +108621,12 @@ async function klanMesajlariYukle() {
 }
 async function klanSohbetiTemizle() {
   if(!G.klan||!G.klan.ad)return;
+  // Buluttan tum klan sohbetini sil (kalici)
+  try {
+    var r=await fetch(CF_API+'/klan/sohbet/temizle',{method:'DELETE',headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok){log('⛔ '+(d.hata||'Sohbet silinemedi'),'er');return;}
+  } catch(e){log('Sunucuya bağlanılamadı!','er');return;}
   if(!G.klan.mesajlar)G.klan.mesajlar=[];
   G.klan.mesajlar=[];
   save(); klanMesajlariYukle(); log('🗑 Sohbet temizlendi.','sy');
@@ -108630,8 +108653,13 @@ async function klanSohbetiAktar() {
   URL.revokeObjectURL(url);
   log('📤 Sohbet dışa aktarıldı (' + _msj.length + ' mesaj).','ok');
 }
-function klanTekMesajSil(id) {
+async function klanTekMesajSil(id) {
   if(!id)return;
+  try {
+    var r=await fetch(CF_API+'/klan/sohbet/sil',{method:'DELETE',headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||''),'Content-Type':'application/json'},body:JSON.stringify({id:id})});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok){log('⛔ '+(d.hata||'Mesaj silinemedi'),'er');return;}
+  } catch(e){log('Sunucuya bağlanılamadı!','er');return;}
   if(!G.klan.mesajlar)G.klan.mesajlar=[];
   G.klan.mesajlar=G.klan.mesajlar.filter(function(m){return m.id!==id;});
   save(); klanMesajlariYukle();
@@ -108669,10 +108697,15 @@ async function klanSeciliMesajlariSil() {
   if(secili.length===0){log('Silmek için mesaj seçin!','sy');return;}
   if(!confirm(secili.length+' mesaj silinsin mi?'))return;
   var ids=Array.from(secili).map(function(x){return x.getAttribute('data-mesaj-id');});
+  try {
+    var r=await fetch(CF_API+'/klan/sohbet/sil',{method:'DELETE',headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||''),'Content-Type':'application/json'},body:JSON.stringify({ids:ids})});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok){log('⛔ '+(d.hata||'Mesajlar silinemedi'),'er');return;}
+    log('🗑 '+(d.silinen||ids.length)+' mesaj silindi.','sy');
+  } catch(e){log('Sunucuya bağlanılamadı!','er');return;}
   if(!G.klan.mesajlar)G.klan.mesajlar=[];
   G.klan.mesajlar=G.klan.mesajlar.filter(function(m){return ids.indexOf(m.id)<0;});
   save(); klanMesajlariYukle();
-  log('🗑 '+ids.length+' mesaj silindi.','sy');
 }
 function klanToplamUye() {
   klanInit(); if (!G.klan.kuruldu) return 0;
@@ -108774,6 +108807,7 @@ async function klanSupaYukle() {
       window._klanBulutBanka = Math.round(d.klan.banka||0);
       window._klanBulutBanlilar = d.klan.banlilar || [];
       window._klanBulutLog = d.klan.log || [];
+      window._klanBenMute = !!(d.klan.benim_mute && Date.now() < d.klan.benim_mute);
       if(G.klan) G.klan.banka = window._klanBulutBanka;
     } else {
       window._klanBulutUyeler = [];
@@ -109016,7 +109050,7 @@ function renderKlan() {
       h+='<div id="klanSohbetList" style="height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-bottom:8px;padding:4px;background:#202a42;border-radius:6px;border:1px solid #2e4060">';
       h+='<div style="font-size:11px;color:#6080a0;text-align:center;padding:8px">Yükleniyor...</div>';
       h+='</div>';
-      var _benSustur=G.klan.susturulanlar&&G.klan.susturulanlar[G._oyuncuAdi||'Ben']&&Date.now()<G.klan.susturulanlar[G._oyuncuAdi||'Ben'];
+      var _benSustur=window._klanBenMute===true||(G.klan.susturulanlar&&G.klan.susturulanlar[G._oyuncuAdi||'Ben']&&Date.now()<G.klan.susturulanlar[G._oyuncuAdi||'Ben']);
       h+='<div style="display:flex;gap:6px">';
       if(_benSustur){
         h+='<div style="flex:1;padding:6px 10px;background:#1a0f05;border:1px solid #f97316;border-radius:6px;color:#f97316;font-size:12px">🔇 Susturuldunuz</div>';
