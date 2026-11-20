@@ -109054,6 +109054,19 @@ async function klanSupaYukle() {
     } else {
       window._klanBulutUyeler = [];
       window._klanBulutRol = null;
+      // Sunucu uyelik dondurmedi: klandan cikarilmis -> local state temizle
+      if(window._klanBulutAd){
+        window._klanBulutAd = null;
+        window._klanBulutBanka = 0;
+        window._klanBulutBanlilar = [];
+        window._klanBulutLog = [];
+        window._klanBulutIstekler = [];
+        if(G.klan){ G.klan.kuruldu=false; G.klan.ad=''; G.klan.banka=0; G.klan.uyeler=[]; G.klan.log=[]; }
+        try{ save(); }catch(e){}
+        log('🚪 Klandan çıkarıldınız.','er');
+        renderKlan();
+        return;
+      }
     }
     var ist = [];
     if(window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci'){
@@ -109102,7 +109115,7 @@ function klanBulutRender() {
         var _benim=u.kullanici_adi===(G._oyuncuAdi||'Ben');
         var _mSustur=u.mute_until&&Date.now()<u.mute_until;
         var _durum=u.ban===1?' 🔨(Banlı)':_mSustur?' 🔇(Susturuldu)':'';
-        h2+='<div'+(_benim?'':' onclick="window._klanSeciliUye=\''+u.kullanici_adi+'\';var b=document.getElementById(\'klanUyeAksiyonBar\');if(b){b.style.display=\'flex\';document.getElementById(\'klanSeciliUyeAd\').textContent=\''+_ik+' '+u.kullanici_adi+'\';}"')+' class="klan-uye-row" style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:#202a42;border:1px solid #2e4060;border-radius:6px;margin-bottom:3px;cursor:pointer">';
+        h2+='<div'+(_benim||!_isYonetici?'':' onclick="window._klanSeciliUye=\''+u.kullanici_adi+'\';var b=document.getElementById(\'klanUyeAksiyonBar\');if(b){b.style.display=\'flex\';document.getElementById(\'klanSeciliUyeAd\').textContent=\''+_ik+' '+u.kullanici_adi+'\';}"')+' class="klan-uye-row" style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:#202a42;border:1px solid #2e4060;border-radius:6px;margin-bottom:3px;'+(_benim||!_isYonetici?'':'cursor:pointer')+'">';
         h2+='<span>'+_ik+'</span>';
         h2+='<span style="font-size:11px;color:'+(_benim?'#10b981':u.rol==='lider'?'#f59e0b':u.rol==='yardimci'?'#a78bfa':_mSustur?'#f97316':'#d8e8f8')+';flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+u.kullanici_adi+_rl+(_benim?' (Sen)':'')+'</span>';
         if(_durum)h2+='<span style="font-size:10px;color:'+(u.ban===1?'#fca5a5':'#f97316')+';white-space:nowrap">'+_durum+'</span>';
@@ -109195,6 +109208,8 @@ function renderKlan() {
   if(typeof klanSupaYukle==='function') klanSupaYukle();
   var _oyAdi=G._oyuncuAdi||'Ben';
   var _isLider=(window._klanBulutRol==='lider')||(G.klan&&(G.klan.lider===_oyAdi||G.klan.lider==='Ben'||G.klan.lider==='Sen'))||false;
+  var _isYonetici=_isLider||window._klanBulutRol==='yardimci'||(G.klan&&G.klan.yardimci&&(G.klan.yardimci===_oyAdi||G.klan.yardimci==='Ben'));
+  var h='';
   var h='';
   h+='<div style="max-width:680px;margin:0 auto;padding:8px">';
   if (!G.klan.kuruldu) {
@@ -109258,6 +109273,7 @@ function renderKlan() {
     h+='</div></div>';
     if(G._klanUyeAcik){
       h+='<div style="margin-top:8px">';
+    if(_isYonetici){
       // Üst aksiyon barı
       h+='<div id="klanUyeAksiyonBar" style="display:none;align-items:center;gap:6px;padding:6px 10px;background:#202a42;border:1px solid #2e4060;border-radius:8px;margin-bottom:8px;flex-wrap:wrap">';
       h+='<span id="klanSeciliUyeAd" style="font-size:12px;font-weight:700;color:#a78bfa;flex:1">— Üye seçin —</span>';
@@ -109267,6 +109283,7 @@ function renderKlan() {
       h+='<button onclick="klanBan(window._klanSeciliUye);" style="padding:4px 10px;background:#2a0505;color:#fca5a5;border:1px solid #991b1b;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">🔨 Banla</button>';
       h+='<button onclick="klanCikart(window._klanSeciliUye);" style="padding:4px 10px;background:#1a0505;color:#ef4444;border:1px solid #ef4444;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">🚫 Çıkart</button>';
       h+='</div>';
+      }
       // Bulut: katilim istekleri + uye listesi + banlilar (klanSupaYukle doldurur)
       h+='<div id="klanIsteklerBolumu"></div>';
       h+='<div id="klanBulutUyeListe"></div>';
@@ -109277,7 +109294,6 @@ function renderKlan() {
     
 // Klan Sohbet
     var _sohbetKapali=G.klan.sohbetKapali||false;
-    var _isYonetici=_isLider||window._klanBulutRol==='yardimci'||(G.klan.yardimci&&(G.klan.yardimci===(G._oyuncuAdi||'Ben')||G.klan.yardimci==='Ben'));
     h+='<div style="background:#243050;border:1px solid #2e4060;border-radius:10px;padding:12px 16px;margin-top:10px">';
     // Başlık satırı
     h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px">';
