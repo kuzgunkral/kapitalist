@@ -92,6 +92,20 @@ async function kadiBul(env, uid) {
   return k ? k.kullanici_adi : null;
 }
 __name(kadiBul, "kadiBul");
+async function ekTablolar(env) {
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS sohbet_durum (k TEXT PRIMARY KEY, kapali INTEGER DEFAULT 0)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS raporlar (id TEXT PRIMARY KEY, mesaj_id TEXT, kullanici_adi TEXT, mesaj TEXT, rapor_eden TEXT, zaman INTEGER)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS dm (id TEXT PRIMARY KEY, gonderen TEXT, alici TEXT, mesaj TEXT, zaman INTEGER)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS klan_davetler (id TEXT PRIMARY KEY, klan_id TEXT, alici_kadi TEXT, gonderen TEXT, zaman INTEGER)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS online_durum (kullanici_adi TEXT PRIMARY KEY, son_aktif INTEGER)").run();
+}
+__name(ekTablolar, "ekTablolar");
+async function adminMi(env, kadi) {
+  if (ADMINLAR.indexOf(kadi) >= 0) return true;
+  const m = await modGet(env, kadi);
+  return m.admin === 1;
+}
+__name(adminMi, "adminMi");
 var index_default = {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -234,6 +248,11 @@ var index_default = {
         if (!kadi) return jsonResponse({ hata: "Kullanici bulunamadi" }, 401);
         const _mod = await modGet(env, kadi);
         if (_mod.ban === 1) return jsonResponse({ hata: "Hesabiniz sohbetten banlandi" }, 403);
+        await ekTablolar(env);
+        const stKapali = await env.DB.prepare("SELECT kapali FROM sohbet_durum WHERE k='1'").first();
+        if (stKapali && stKapali.kapali === 1 && !(await adminMi(env, kadi)))
+          return jsonResponse({ hata: "Sohbet yonetici tarafindan kapatildi" }, 403);
+        await env.DB.prepare("INSERT INTO online_durum (kullanici_adi,son_aktif) VALUES (?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET son_aktif=excluded.son_aktif").bind(kadi, Date.now()).run();
         if (_mod.mute_until > Date.now()) {
           const dk = Math.ceil((_mod.mute_until - Date.now()) / 60000);
           return jsonResponse({ hata: "Susturuldunuz, " + dk + " dakika sonra tekrar deneyin" }, 403);
@@ -257,8 +276,27 @@ var index_default = {
     }
     if (path === "/sohbet" && request.method === "GET") {
       try {
+        await ekTablolar(env);
         const { results } = await env.DB.prepare("SELECT id,kullanici_adi,mesaj,zaman FROM global_sohbet ORDER BY zaman ASC LIMIT 50").all();
-        return jsonResponse({ mesajlar: results || [] });
+        let online = [];
+        let kapali = 0;
+        let davetler = [];
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (uid) {
+          const benim = await kadiBul(env, uid);
+          if (benim) {
+            await env.DB.prepare("DELETE FROM online_durum WHERE son_aktif<?").bind(Date.now() - 600000).run();
+            await env.DB.prepare("INSERT INTO online_durum (kullanici_adi,son_aktif) VALUES (?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET son_aktif=excluded.son_aktif").bind(benim, Date.now()).run();
+            const o = await env.DB.prepare("SELECT kullanici_adi FROM online_durum WHERE son_aktif>? ORDER BY son_aktif DESC LIMIT 50").bind(Date.now() - 120000).all();
+            online = (o.results || []).map(function(x){ return x.kullanici_adi; });
+            const dv = await env.DB.prepare("SELECT d.id, d.gonderen, kl.ad FROM klan_davetler d JOIN klanlar kl ON kl.id=d.klan_id WHERE d.alici_kadi=? ORDER BY d.zaman DESC LIMIT 10").bind(benim).all();
+            davetler = dv.results || [];
+            const st = await env.DB.prepare("SELECT kapali FROM sohbet_durum WHERE k='1'").first();
+            kapali = st && st.kapali ? 1 : 0;
+          }
+        }
+        return jsonResponse({ mesajlar: results || [], online, kapali, davetler });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -305,6 +343,183 @@ var index_default = {
         return jsonResponse({ hata: e.message }, 500);
       }
     }
+    if (path === "/sohbet/durum" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        await modTabloOlustur(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        if (!(await adminMi(env, benim))) return jsonResponse({ hata: "Yetkiniz yok" }, 403);
+        const { kapali } = await request.json();
+        await env.DB.prepare("INSERT INTO sohbet_durum (k,kapali) VALUES ('1',?) ON CONFLICT(k) DO UPDATE SET kapali=excluded.kapali").bind(kapali ? 1 : 0).run();
+        return jsonResponse({ basarili: true, kapali: kapali ? 1 : 0 });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    if (path === "/sohbet/rapor" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        const { id } = await request.json();
+        if (!id) return jsonResponse({ hata: "id gerekli" }, 400);
+        const mesaj = await env.DB.prepare("SELECT id,kullanici_adi,mesaj FROM global_sohbet WHERE id=?").bind(id).first();
+        if (!mesaj) return jsonResponse({ hata: "Mesaj bulunamadi (silinmis olabilir)" }, 404);
+        const zaten = await env.DB.prepare("SELECT id FROM raporlar WHERE mesaj_id=? AND rapor_eden=?").bind(id, benim).first();
+        if (zaten) return jsonResponse({ hata: "Bu mesaji zaten rapor ettiniz" }, 400);
+        await env.DB.prepare("INSERT INTO raporlar (id,mesaj_id,kullanici_adi,mesaj,rapor_eden,zaman) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(), id, mesaj.kullanici_adi, mesaj.mesaj, benim, Date.now()).run();
+        return jsonResponse({ basarili: true, mesaj: "Mesaj rapor edildi, yonetici inceleyecek" });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    /*__EK_ENDPOINTLER__*/
+    if (path === "/panel/raporlar" && request.method === "GET") {
+      try {
+        await ekTablolar(env);
+        await modTabloOlustur(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        if (!(await adminMi(env, benim))) return jsonResponse({ hata: "Yetkiniz yok" }, 403);
+        const { results } = await env.DB.prepare("SELECT id,mesaj_id,kullanici_adi,mesaj,rapor_eden,zaman FROM raporlar ORDER BY zaman DESC LIMIT 100").all();
+        return jsonResponse({ raporlar: results || [] });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    if (path === "/panel/rapor-sil" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        await modTabloOlustur(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        if (!(await adminMi(env, benim))) return jsonResponse({ hata: "Yetkiniz yok" }, 403);
+        const { id } = await request.json();
+        if (!id) return jsonResponse({ hata: "id gerekli" }, 400);
+        await env.DB.prepare("DELETE FROM raporlar WHERE id=?").bind(id).run();
+        return jsonResponse({ basarili: true });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    /*__EK_ENDPOINTLER2__*/
+    if (path === "/dm" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        const { hedef, mesaj } = await request.json();
+        if (!hedef || !mesaj || !mesaj.trim()) return jsonResponse({ hata: "hedef ve mesaj gerekli" }, 400);
+        if (mesaj.length > 300) return jsonResponse({ hata: "Mesaj cok uzun (max 300)" }, 400);
+        if (hedef === benim) return jsonResponse({ hata: "Kendinize mesaj atamazsiniz" }, 400);
+        const hedefK = await env.DB.prepare("SELECT id FROM kullanicilar WHERE kullanici_adi=?").bind(hedef).first();
+        if (!hedefK) return jsonResponse({ hata: "Kullanici bulunamadi" }, 404);
+        await env.DB.prepare("INSERT INTO dm (id,gonderen,alici,mesaj,zaman) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), benim, hedef, mesaj.trim(), Date.now()).run();
+        return jsonResponse({ basarili: true });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    /*__EK_ENDPOINTLER3__*/
+    if (path === "/dm" && request.method === "GET") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        const hedef = url.searchParams.get("hedef");
+        if (!hedef) return jsonResponse({ hata: "hedef gerekli" }, 400);
+        const { results } = await env.DB.prepare(
+          "SELECT gonderen,alici,mesaj,zaman FROM dm WHERE (gonderen=? AND alici=?) OR (gonderen=? AND alici=?) ORDER BY zaman DESC LIMIT 30"
+        ).bind(benim, hedef, hedef, benim).all();
+        return jsonResponse({ mesajlar: (results || []).reverse() });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    /*__EK_ENDPOINTLER4__*/
+    if (path === "/klan/davet" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
+        if (!uyelik || (uyelik.rol !== "lider" && uyelik.rol !== "yardimci"))
+          return jsonResponse({ hata: "Sadece klan lideri veya yardimcisi davet edebilir" }, 403);
+        const { hedef } = await request.json();
+        if (!hedef) return jsonResponse({ hata: "hedef gerekli" }, 400);
+        const hedefK = await env.DB.prepare("SELECT id,kullanici_adi FROM kullanicilar WHERE kullanici_adi=?").bind(hedef).first();
+        if (!hedefK) return jsonResponse({ hata: "Kullanici bulunamadi" }, 404);
+        if (hedef === benim) return jsonResponse({ hata: "Kendinizi davet edemezsiniz" }, 400);
+        const hedefUye = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(hedefK.id).first();
+        if (hedefUye) return jsonResponse({ hata: hedef + " zaten bir klana uye" }, 400);
+        const mevcut = await env.DB.prepare("SELECT id FROM klan_davetler WHERE klan_id=? AND alici_kadi=?").bind(uyelik.klan_id, hedef).first();
+        if (mevcut) return jsonResponse({ hata: hedef + " zaten davetli" }, 400);
+        const uyeSayisi = await env.DB.prepare("SELECT COUNT(*) AS c FROM klan_uyeler WHERE klan_id=?").bind(uyelik.klan_id).first();
+        if (uyeSayisi && uyeSayisi.c >= 30) return jsonResponse({ hata: "Klan dolu (30/30)" }, 400);
+        await env.DB.prepare("INSERT INTO klan_davetler (id,klan_id,alici_kadi,gonderen,zaman) VALUES (?,?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, hedef, benim, Date.now()).run();
+        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, benim + ", " + hedef + " kullanicisini davet etti", Date.now()).run();
+        return jsonResponse({ basarili: true, mesaj: hedef + " klana davet edildi" });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    /*__EK_ENDPOINTLER5__*/
+    if (path === "/klan/davetler" && request.method === "GET") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        const { results } = await env.DB.prepare("SELECT d.id, d.gonderen, kl.ad FROM klan_davetler d JOIN klanlar kl ON kl.id=d.klan_id WHERE d.alici_kadi=? ORDER BY d.zaman DESC LIMIT 10").bind(benim).all();
+        return jsonResponse({ davetler: results || [] });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    if (path === "/klan/davet-kabul" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        const { id, aksiyon } = await request.json();
+        if (!id) return jsonResponse({ hata: "id gerekli" }, 400);
+        const davet = await env.DB.prepare("SELECT * FROM klan_davetler WHERE id=? AND alici_kadi=?").bind(id, benim).first();
+        if (!davet) return jsonResponse({ hata: "Davet bulunamadi" }, 404);
+        await env.DB.prepare("DELETE FROM klan_davetler WHERE id=?").bind(id).run();
+        if (aksiyon !== "kabul") return jsonResponse({ basarili: true, kabul: false });
+        const zatenUye = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
+        if (zatenUye) return jsonResponse({ hata: "Zaten bir klana uyesiniz" }, 400);
+        const uyeSayisi = await env.DB.prepare("SELECT COUNT(*) AS c FROM klan_uyeler WHERE klan_id=?").bind(davet.klan_id).first();
+        if (uyeSayisi && uyeSayisi.c >= 30) return jsonResponse({ hata: "Klan dolu (30/30)" }, 400);
+        await klanModTabloOlustur(env);
+        const banKayit = await env.DB.prepare("SELECT ban FROM klan_mod WHERE klan_id=? AND kullanici_id=?").bind(davet.klan_id, uid).first();
+        if (banKayit && banKayit.ban === 1) return jsonResponse({ hata: "Bu klandan banlanmissiniz" }, 403);
+        await env.DB.prepare("INSERT INTO klan_uyeler (kullanici_id,klan_id,rol,katildi) VALUES (?,?,?,?)").bind(uid, davet.klan_id, "uye", Date.now()).run();
+        const kl = await env.DB.prepare("SELECT ad FROM klanlar WHERE id=?").bind(davet.klan_id).first();
+        await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(crypto.randomUUID(), davet.klan_id, benim + " daveti kabul etti ve klana katildi", Date.now()).run();
+        return jsonResponse({ basarili: true, kabul: true, klan: { ad: kl ? kl.ad : null } });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
     if (path === "/panel" && request.method === "GET") {
       try {
         await modTabloOlustur(env);
@@ -343,9 +558,14 @@ var index_default = {
         ).bind(hedef, hedefMod.mute_until || 0, hedefMod.ban || 0, hedefMod.admin || 0, Date.now()).run();
         let mesaj = "";
         if (islem === "mute") {
-          const until = Date.now() + (Number(sure_dk) || 60) * 60 * 1000;
-          await env.DB.prepare("UPDATE moderasyon SET mute_until=? WHERE kullanici_adi=?").bind(until, hedef).run();
-          mesaj = hedef + " " + (Number(sure_dk) || 60) + " dakika susturuldu";
+          if (hedefMod.mute_until && hedefMod.mute_until > Date.now()) {
+            await env.DB.prepare("UPDATE moderasyon SET mute_until=0 WHERE kullanici_adi=?").bind(hedef).run();
+            mesaj = hedef + " kısıtlaması açıldı (unmute)";
+          } else {
+            const until = Date.now() + (Number(sure_dk) || 60) * 60 * 1000;
+            await env.DB.prepare("UPDATE moderasyon SET mute_until=? WHERE kullanici_adi=?").bind(until, hedef).run();
+            mesaj = hedef + " " + (Number(sure_dk) || 60) + " dakika kısıtlandı (mute)";
+          }
         } else if (islem === "unmute") {
           await env.DB.prepare("UPDATE moderasyon SET mute_until=0 WHERE kullanici_adi=?").bind(hedef).run();
           mesaj = hedef + " susturulmasi kaldirildi";
