@@ -18587,9 +18587,12 @@ function sohbetMuteKilitle(){
 function pmEngelliListe(){try{return JSON.parse(localStorage.getItem('_pmEngelliler')||'{}')||{};}catch(e){return {};}}
 function pmEngelliToggle(kadi){
   if(!kadi)return;
+  if(kadi===(window._currentUser||'')||kadi==='Ben')return;
   var l=pmEngelliListe();
   if(l[kadi]){delete l[kadi];try{localStorage.setItem('_pmEngelliler',JSON.stringify(l));}catch(e){}log('✅ '+kadi+' için engel kaldırıldı — PM\'leri artık görünür','ok');}
   else{l[kadi]=1;try{localStorage.setItem('_pmEngelliler',JSON.stringify(l));}catch(e){}log('🚫 '+kadi+' engellendi — PM\'leri artık sana bildirim olarak gelmez','sy');}
+  var _db=document.getElementById('_dmEngelBtn');
+  if(_db){var _e=!!l[kadi];_db.textContent=_e?'✅':'🚫';_db.title=_e?'Engeli Aç':'Engelle';_db.style.color=_e?'#10b981':'#ef4444';}
   gOnlineRender(window._onlineUyeler||[]);
 }
 function gOnlineCtx(e,kadi){
@@ -18825,10 +18828,11 @@ function gRaporSil(id){
 function gDMPopup(kadi){
   var old=document.getElementById('dmPopup');if(old)old.remove();
   var p=document.createElement('div');p.id='dmPopup';p.style.cssText='position:fixed;z-index:99998;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
+  var _engMe=false;try{_engMe=!!pmEngelliListe()[kadi];}catch(e){}
   var _yon=false;
   try{_yon=(window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci');}catch(e){}
   p.innerHTML='<div style="background:#0a1628;border:1px solid #1e3a5f;border-radius:12px;padding:14px;width:320px;max-width:92vw;box-sizing:border-box">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#10b981">💬 '+kadi+'</span><span style="display:flex;gap:4px;align-items:center"><span onclick="gDMMinimize()" title="Küçült (sağ alta iner)" style="cursor:pointer;color:#6080a0;font-size:14px;padding:2px 8px;border-radius:4px">➖</span><span onclick="gDMKapat()" title="Kapat" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px;border-radius:4px">✕</span></span></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#10b981">💬 '+kadi+'<span id="_dmEngelBtn" onclick="pmEngelliToggle(window._dmAktifKadi)" title="'+(_engMe?'Engeli Aç':'Engelle')+'" style="cursor:pointer;font-size:12px;padding:1px 7px;margin-left:8px;border-radius:4px;color:'+(_engMe?'#10b981':'#ef4444')+'">'+(_engMe?'✅':'🚫')+'</span></span><span style="display:flex;gap:4px;align-items:center"><span onclick="gDMMinimize()" title="Küçült (sağ alta iner)" style="cursor:pointer;color:#6080a0;font-size:14px;padding:2px 8px;border-radius:4px">➖</span><span onclick="gDMKapat()" title="Kapat" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px;border-radius:4px">✕</span></span></div>'
     +'<div id="_dmList" style="height:180px;overflow-y:auto;background:#060f1a;border:1px solid #1e3a5f;border-radius:8px;padding:6px;margin-bottom:8px;font-size:11px;line-height:1.6"></div>'
     +(_yon&&kadi!==(window._currentUser||'')?'<button id="_dmDavetBtn" onclick="klDavetEt(\''+kadi+'\')" style="width:100%;margin-bottom:8px;padding:6px;background:#2a1a4a;border:1px solid #7c3aed;border-radius:6px;color:#a78bfa;font-size:11px;font-weight:700;cursor:pointer">⚔️ Klana Davet Et</button>':'')
     +(_gYetki.admin&&kadi!==(window._currentUser||'')?'<button id="_dmKisitBtn" onclick="gAksiyonGonder(\''+kadi+'\',\'mute\',60)" style="width:100%;margin-bottom:8px;padding:6px;background:#1a0f05;border:1px solid #f97316;border-radius:6px;color:#f97316;font-size:11px;font-weight:700;cursor:pointer">🔒 Kısıtla (60dk)</button>':'')
