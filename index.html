@@ -18600,6 +18600,42 @@ function gOnlineRender(list){
   if(!h)h='<div style="color:#4a7090;font-size:10px;padding:6px 2px">Şu an online kimse yok</div>';
   el.innerHTML=h;
 }
+// Bekleyen klan davetlerini çek; ekran üstü banner + anasayfa davet kutusunu güncelle
+function klDavetSenk(){
+  var tok=localStorage.getItem('cf_token')||'';
+  if(!tok) return;
+  fetch(CF_API+'/klan/davetler',{headers:{'Authorization':'Bearer '+tok}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var dv=(d&&d.davetler)||[];
+      if(dv.length)gDavetRender(dv);
+      else if(document.getElementById('ana-davetler'))gDavetRender([]);
+      var _klansiz=true;try{_klansiz=!(window.G&&G.klan&&G.klan.kuruldu);}catch(e){}
+      if(_klansiz&&dv.length){
+        dv.forEach(function(x){
+          window._gDavetGorulen=window._gDavetGorulen||{};
+          if(!window._gDavetGorulen[x.id]){window._gDavetGorulen[x.id]=1;log('📥 '+x.gonderen+' sizi "'+x.ad+'" klanına davet etti!','ok');}
+        });
+        klDavetBannerGoster(dv);
+      } else {
+        var b=document.getElementById('klanDavetBanner');if(b)b.remove();
+      }
+    })
+    .catch(function(){});
+}
+function klDavetBannerGoster(davetler){
+  var old=document.getElementById('klanDavetBanner');if(old)old.remove();
+  if(!(davetler||[]).length)return;
+  var _klansiz=true;try{_klansiz=!(window.G&&G.klan&&G.klan.kuruldu);}catch(e){}
+  if(!_klansiz)return;
+  var d=davetler[0];
+  var b=document.createElement('div');b.id='klanDavetBanner';
+  b.style.cssText='position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:99997;background:#1a0f2a;border:1px solid #7c3aed;border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 12px rgba(0,0,0,.4);max-width:92vw;box-sizing:border-box;flex-wrap:wrap;justify-content:center';
+  b.innerHTML='<span style="font-size:12px;color:#d8e8f8">📥 <b style="color:#a78bfa">'+d.gonderen+'</b> sizi <b style="color:#a78bfa">"'+d.ad+'"</b> klanına davet etti</span>'
+    +'<button onclick="klDavetKarar(\''+d.id+'\',\'kabul\')" style="padding:4px 12px;background:#0a2e1a;color:#10b981;border:1px solid #10b981;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✔ Kabul</button>'
+    +'<button onclick="klDavetKarar(\''+d.id+'\',\'red\')" style="padding:4px 12px;background:#1a0505;color:#ef4444;border:1px solid #ef4444;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✖ Red</button>';
+  document.body.appendChild(b);
+}
 // Global online heartbeat: her 60 sn'de sunucuya ping, online listesi tazelenir
 setInterval(function(){
   var tok=localStorage.getItem('cf_token')||'';
@@ -18608,7 +18644,9 @@ setInterval(function(){
     .then(function(r){return r.json();})
     .then(function(d){ if(d&&d.online){ window._gOnlineListe=d.online; if(document.getElementById('ana-online')) gOnlineRender(d.online); } })
     .catch(function(){});
+  klDavetSenk();
 }, 60000);
+klDavetSenk();
 function gKapaliUygula(kapali){
   _gKapali=!!kapali;
   var b=document.getElementById('gKapatBtn');
@@ -18647,6 +18685,8 @@ function klDavetKarar(id,aksiyon){
       log('Davet reddedildi.','sy');
     }
     gDavetRender([]);
+    var _b=document.getElementById('klanDavetBanner');if(_b)_b.remove();
+    if(window.klDavetSenk)setTimeout(klDavetSenk,300);
   })
   .catch(function(){log('Sunucuya bağlanılamadı','er');});
 }
@@ -18691,7 +18731,7 @@ function gDMPopup(kadi){
   p.innerHTML='<div style="background:#0a1628;border:1px solid #1e3a5f;border-radius:12px;padding:14px;width:320px;max-width:92vw;box-sizing:border-box">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#10b981">💬 '+kadi+'</span><span onclick="document.getElementById(\'dmPopup\').remove()" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px">✕</span></div>'
     +'<div id="_dmList" style="height:180px;overflow-y:auto;background:#060f1a;border:1px solid #1e3a5f;border-radius:8px;padding:6px;margin-bottom:8px;font-size:11px;line-height:1.6"></div>'
-    +(_yon?'<button onclick="klDavetEt(\''+kadi+'\')" style="width:100%;margin-bottom:8px;padding:6px;background:#2a1a4a;border:1px solid #7c3aed;border-radius:6px;color:#a78bfa;font-size:11px;font-weight:700;cursor:pointer">⚔️ Klana Davet Et</button>':'')
+    +(_yon&&kadi!==(window._currentUser||'')?'<button id="_dmDavetBtn" onclick="klDavetEt(\''+kadi+'\')" style="width:100%;margin-bottom:8px;padding:6px;background:#2a1a4a;border:1px solid #7c3aed;border-radius:6px;color:#a78bfa;font-size:11px;font-weight:700;cursor:pointer">⚔️ Klana Davet Et</button>':'')
     +(_gYetki.admin&&kadi!==(window._currentUser||'')?'<button id="_dmKisitBtn" onclick="gAksiyonGonder(\''+kadi+'\',\'mute\',60)" style="width:100%;margin-bottom:8px;padding:6px;background:#1a0f05;border:1px solid #f97316;border-radius:6px;color:#f97316;font-size:11px;font-weight:700;cursor:pointer">🔒 Kısıtla (60dk)</button>':'')
     +'<div style="display:flex;gap:6px"><input id="_dmInp" type="text" maxlength="300" placeholder="Özel mesaj..." style="flex:1;background:#060f1a;border:1px solid #1e3a5f;border-radius:6px;color:#d8e8f8;font-size:12px;padding:6px 8px" onkeydown="if(event.key===\'Enter\')gDMGonder(\''+kadi+'\')"><button onclick="gDMGonder(\''+kadi+'\')" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer">➤</button></div>'
     +'</div>';
@@ -18727,11 +18767,18 @@ function gDMGonder(kadi){
   .catch(function(){log('Sunucuya bağlanılamadı','er');});
 }
 function klDavetEt(kadi){
-  if(!confirm(kadi+' klana davet edilsin mi?'))return;
+  var btn=document.getElementById('_dmDavetBtn');
+  function _reset(){if(btn){btn.disabled=false;btn.textContent='⚔️ Klana Davet Et';}}
+  if(!confirm(kadi+' klana davet edilsin mi?')){_reset();return;}
+  if(btn){btn.disabled=true;btn.textContent='⏳ Gönderiliyor...';}
   fetch(CF_API+'/klan/davet',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({hedef:kadi})})
   .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
-  .then(function(x){log(x.ok?'✅ '+(x.d.mesaj||'Davet gönderildi'):'⛔ '+(x.d.hata||'Davet gönderilemedi'),x.ok?'ok':'er');})
-  .catch(function(){log('Sunucuya bağlanılamadı','er');});
+  .then(function(x){
+    log(x.ok?'✅ '+(x.d.mesaj||'Davet gönderildi'):'⛔ '+(x.d.hata||'Davet gönderilemedi'),x.ok?'ok':'er');
+    if(x.ok&&btn){btn.textContent='✅ Davet gönderildi';btn.style.color='#10b981';btn.style.borderColor='#10b981';setTimeout(function(){var p=document.getElementById('dmPopup');if(p)p.remove();},2000);}
+    else _reset();
+  })
+  .catch(function(){log('Sunucuya bağlanılamadı','er');_reset();});
 }
 function sohbetGonder(){
   var inp=document.getElementById("sohbet-inp");
@@ -109103,6 +109150,8 @@ function klanBulutRender() {
     }
     istEl.innerHTML=h;
   }
+  var _roz=document.getElementById('klanIstekRozet');
+  if(_roz){var _istN=(window._klanBulutIstekler||[]).length;_roz.textContent='📥 '+_istN;_roz.style.display=_istN?'':'none';}
   var uyeEl = document.getElementById('klanBulutUyeListe');
   if(uyeEl) {
     var uy = window._klanBulutUyeler||[];
@@ -109266,11 +109315,13 @@ function renderKlan() {
     h+='<div id="klanBankaDetay" style="display:'+(G._klanBankaDetay?'block':'none')+';width:100%;margin-top:6px;font-size:11px;color:#d8e8f8"></div>';
     h+='</div></div>';
     
+    // Katılım istekleri — Üyeler bölümünden bağımsız, her zaman görünür (klanSupaYukle doldurur)
+    h+='<div id="klanIsteklerBolumu" style="margin-bottom:10px"></div>';
     // Uyeler - acilir kapanir
     if(G._klanUyeAcik===undefined)G._klanUyeAcik=false;
     h+='<div style="background:#243050;border:1px solid #2e4060;border-radius:10px;padding:12px 16px;margin-bottom:10px">';
     h+='<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="G._klanUyeAcik=!G._klanUyeAcik;renderKlan()">';
-    h+='<div style="font-size:12px;font-weight:700;color:#d8e8f8">👥 Üyeler <span style="font-size:10px;color:#6080a0">('+tu+' kişi)</span></div>';
+    h+='<div style="font-size:12px;font-weight:700;color:#d8e8f8">👥 Üyeler <span style="font-size:10px;color:#6080a0">('+tu+' kişi)</span><span id="klanIstekRozet" style="display:none;margin-left:6px;padding:1px 8px;background:#2a1a05;border:1px solid #f59e0b;border-radius:999px;color:#f59e0b;font-size:10px;font-weight:800"></span></div>';
     h+='<div style="display:flex;gap:6px;align-items:center">';
     
     h+='<span style="font-size:14px;color:#6080a0">'+(G._klanUyeAcik?'▲':'▼')+'</span>';
@@ -109288,8 +109339,7 @@ function renderKlan() {
       h+='<button onclick="klanCikart(window._klanSeciliUye);" style="padding:4px 10px;background:#1a0505;color:#ef4444;border:1px solid #ef4444;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">🚫 Çıkart</button>';
       h+='</div>';
       }
-      // Bulut: katilim istekleri + uye listesi + banlilar (klanSupaYukle doldurur)
-      h+='<div id="klanIsteklerBolumu"></div>';
+      // Bulut: uye listesi + banlilar (klanSupaYukle doldurur); istekler bölümü Üyeler'den bağımsız üstte
       h+='<div id="klanBulutUyeListe"></div>';
       h+='<div id="klanBulutBanListe"></div>';
       h+='</div>';
@@ -109378,6 +109428,7 @@ function renderKlan() {
   }
   h+='</div>';
   el.innerHTML=h;
+  if(window._klanBulutIstekler)klanBulutRender();
   // Klan sohbeti yükle + realtime subscribe
   if(G.klan&&G.klan.kuruldu&&G.klan.ad){
     klanMesajlariYukle();
