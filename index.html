@@ -18552,7 +18552,7 @@ function sohbetGonder(){
 
 function gSohbetMuteToggle(){_gMute=!_gMute;var b=document.getElementById("gMuteBtn");if(b){b.textContent=_gMute?"Unmute":"Mute";b.style.color=_gMute?"#ef4444":"#94a3b8";b.style.borderColor=_gMute?"#ef4444":"#334155";}}
 function gSohbetKapatToggle(){_gKapali=!_gKapali;var b=document.getElementById("gKapatBtn");var w=document.getElementById("sohbet-inp-wrap");if(b){b.textContent=_gKapali?"Sohbeti Ac":"Sohbeti Kapat";b.style.color=_gKapali?"#ef4444":"#94a3b8";}if(w)w.style.display=_gKapali?"none":"flex";}
-function gSohbetSeciliSil(){if(!_gSeciliMesajlar.length)return;var ids=_gSeciliMesajlar.slice();var tok=localStorage.getItem('cf_token')||'';Promise.all(ids.map(function(id){return fetch(CF_API+'/sohbet/sil',{method:'DELETE',headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({id:id})});})).then(function(){_gSeciliMesajlar=[];sohbetYukle();});}
+function gSohbetSeciliSil(){if(!_gSeciliMesajlar.length)return;var ids=_gSeciliMesajlar.slice();var tok=localStorage.getItem('cf_token')||'';Promise.all(ids.map(function(id){return fetch(CF_API+'/sohbet/sil',{method:'DELETE',headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({id:id})}).then(function(r){return r.json().then(function(d){return {ok:r.ok,hata:d.hata};});});})).then(function(res){var hata=res.filter(function(x){return !x.ok;});if(hata.length)log('⛔ Sohbet: '+hata.length+' mesaj silinemedi'+(hata[0].hata?' ('+hata[0].hata+')':''),'er');_gSeciliMesajlar=[];sohbetYukle();});}
 function gSohbetTemizle(){if(!confirm('Tum global sohbet silinsin mi?'))return;fetch(CF_API+'/sohbet/temizle',{method:'DELETE',headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}}).then(function(){sohbetYukle();});}
 function gSohbetCtx(e,kadi,id){gYetkiCek();var old=document.getElementById("gCtxMenu");if(old)old.remove();var m=document.createElement("div");m.id="gCtxMenu";m.style.cssText="position:fixed;z-index:99999;background:#0a1628;border:1px solid #1e3a5f;border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,.7);min-width:170px;";m.style.left=e.clientX+"px";m.style.top=e.clientY+"px";var s="padding:6px 10px;cursor:pointer;font-size:12px;border-radius:4px;";var h='';if(_gYetki.admin){h+="<div style='"+s+"color:#f59e0b' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='gSohbetSustur(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>&#x1F507; Sustur: "+kadi+"</div>";h+="<div style='"+s+"color:#ef4444' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='gSohbetBanla(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>&#x26D4; Banla: "+kadi+"</div>";h+="<div style='"+s+"color:#a78bfa' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='gAksiyonGonder(\""+kadi+"\",\"mesaj_sil\",0);document.getElementById(\"gCtxMenu\").remove()'>&#x1F5D1; Tum Mesajlarini Sil</div>";}h+="<div style='"+s+"color:#cbd5e1' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='fetch(CF_API+\"/sohbet/sil\",{method:\"DELETE\",headers:{\"Authorization\":\"Bearer \"+(localStorage.getItem(\"cf_token\")||\"\"),\"Content-Type\":\"application/json\"},body:JSON.stringify({id:\""+id+"\"})}).then(function(){sohbetYukle();});document.getElementById(\"gCtxMenu\").remove()'>&#x1F5D1; Mesaji Sil</div>";h+="<div style='"+s+"color:#6080a0' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='_gBanlilar.push(\""+kadi+"\");sohbetYukle();document.getElementById(\"gCtxMenu\").remove()'>&#x1F441; Bende Gizle</div>";m.innerHTML=h;document.body.appendChild(m);setTimeout(function(){document.addEventListener("click",function hh(){m.remove();document.removeEventListener("click",hh);},true);},100);}
 // Anasayfa acilinca sohbeti yukle
@@ -108818,7 +108818,6 @@ function klanBulutRender() {
     var h2='';
     if(uy.length) {
       h2+='<div style="border-top:1px solid #2e4060;padding-top:8px;margin-top:8px">';
-      h2+='<div style="font-size:11px;font-weight:700;color:#6aa0e0;margin-bottom:6px">👥 Üyeler ('+uy.length+')</div>';
       uy.forEach(function(u){
         var _ik=u.rol==='lider'?'👑':u.rol==='yardimci'?'🥈':'👤';
         var _rl=u.rol==='lider'?' (Lider)':u.rol==='yardimci'?' (Yrd.)':'';
@@ -108833,7 +108832,7 @@ function klanBulutRender() {
       });
       h2+='</div>';
     } else {
-      h2='<div style="font-size:10px;color:#6080a0;margin-top:6px">👥 Üyeler yükleniyor...</div>';
+      h2='';
     }
     uyeEl.innerHTML=h2;
   }

@@ -238,6 +238,12 @@ var index_default = {
           const dk = Math.ceil((_mod.mute_until - Date.now()) / 60000);
           return jsonResponse({ hata: "Susturuldunuz, " + dk + " dakika sonra tekrar deneyin" }, 403);
         }
+        await klanModTabloOlustur(env);
+        const _kmMute = await env.DB.prepare("SELECT MAX(mute_until) AS mu FROM klan_mod WHERE kullanici_id=(SELECT id FROM kullanicilar WHERE kullanici_adi=?)").bind(kadi).first();
+        if (_kmMute && _kmMute.mu > Date.now()) {
+          const dk2 = Math.ceil((_kmMute.mu - Date.now()) / 60000);
+          return jsonResponse({ hata: "Susturuldunuz, " + dk2 + " dakika sonra tekrar deneyin" }, 403);
+        }
         const { mesaj } = await request.json();
         if (!mesaj || mesaj.trim().length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
         if (mesaj.length > 200) return jsonResponse({ hata: "Mesaj cok uzun" }, 400);
@@ -266,16 +272,21 @@ var index_default = {
         const k = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(uid).first();
         const body = await request.json();
         const adminMi = ADMINLAR.indexOf(k.kullanici_adi) >= 0 || (await modGet(env, k.kullanici_adi)).admin === 1;
+        let silinen = 0;
         if (body.id) {
           if (adminMi) {
-            await env.DB.prepare("DELETE FROM global_sohbet WHERE id=?").bind(body.id).run();
+            const r1 = await env.DB.prepare("DELETE FROM global_sohbet WHERE id=?").bind(body.id).run();
+            silinen = r1.meta ? r1.meta.changes : 1;
           } else {
-            await env.DB.prepare("DELETE FROM global_sohbet WHERE id=? AND kullanici_adi=?").bind(body.id, k.kullanici_adi).run();
+            const r1 = await env.DB.prepare("DELETE FROM global_sohbet WHERE id=? AND kullanici_adi=?").bind(body.id, k.kullanici_adi).run();
+            silinen = r1.meta ? r1.meta.changes : 0;
           }
         } else if (body.zaman) {
-          await env.DB.prepare("DELETE FROM global_sohbet WHERE kullanici_adi=? AND zaman=?").bind(k.kullanici_adi, body.zaman).run();
+          const r1 = await env.DB.prepare("DELETE FROM global_sohbet WHERE kullanici_adi=? AND zaman=?").bind(k.kullanici_adi, body.zaman).run();
+          silinen = r1.meta ? r1.meta.changes : 0;
         }
-        return jsonResponse({ basarili: true });
+        if (!silinen) return jsonResponse({ hata: "Mesaj silinemedi (baskasinin mesajini silme yetkiniz yok)" }, 403);
+        return jsonResponse({ basarili: true, silinen });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -610,21 +621,33 @@ var index_default = {
           mesaj = hedef + " baninin kaldirildi";
         } else if (aksiyon === "sustur") {
           const mevcut = await klanModGet(env, uyelik.klan_id, hedefK.id);
+          await modTabloOlustur(env);
           if (mevcut.mute_until > Date.now()) {
             await env.DB.prepare(
               "INSERT INTO klan_mod (klan_id,kullanici_id,ban,mute_until) VALUES (?,?,?,0) ON CONFLICT(klan_id,kullanici_id) DO UPDATE SET mute_until=0"
             ).bind(uyelik.klan_id, hedefK.id, mevcut.ban || 0).run();
+            await env.DB.prepare(
+              "INSERT INTO moderasyon (kullanici_adi,mute_until,ban,admin,guncellendi) VALUES (?,?,?,?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET mute_until=excluded.mute_until, guncellendi=excluded.guncellendi"
+            ).bind(hedef, 0, 0, 0, Date.now()).run();
             mesaj = hedef + " konusturuldu";
           } else {
+            const muteBitis = Date.now() + 60 * 60 * 1000;
             await env.DB.prepare(
               "INSERT INTO klan_mod (klan_id,kullanici_id,ban,mute_until) VALUES (?,?,?,?) ON CONFLICT(klan_id,kullanici_id) DO UPDATE SET mute_until=excluded.mute_until"
-            ).bind(uyelik.klan_id, hedefK.id, mevcut.ban || 0, Date.now() + 60 * 60 * 1000).run();
+            ).bind(uyelik.klan_id, hedefK.id, mevcut.ban || 0, muteBitis).run();
+            await env.DB.prepare(
+              "INSERT INTO moderasyon (kullanici_adi,mute_until,ban,admin,guncellendi) VALUES (?,?,?,?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET mute_until=excluded.mute_until, guncellendi=excluded.guncellendi"
+            ).bind(hedef, muteBitis, 0, 0, Date.now()).run();
             mesaj = hedef + " 1 saat susturuldu";
           }
         } else if (aksiyon === "konustur") {
           await env.DB.prepare(
-            "INSERT INTO klan_mod (klan_id,kullanici_id,ban,mute_until) VALUES (?,?,0,0) ON CONFLICT(klan_id,kullanici_id) DO UPDATE SET mute_until=0"
-          ).bind(uyelik.klan_id, hedefK.id).run();
+            "INSERT INTO klan_mod (klan_id,kullanici_id,ban,mute_until) VALUES (?,?,?,0) ON CONFLICT(klan_id,kullanici_id) DO UPDATE SET mute_until=0"
+          ).bind(uyelik.klan_id, hedefK.id, 0).run();
+          await modTabloOlustur(env);
+          await env.DB.prepare(
+            "INSERT INTO moderasyon (kullanici_adi,mute_until,ban,admin,guncellendi) VALUES (?,?,?,?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET mute_until=excluded.mute_until, guncellendi=excluded.guncellendi"
+          ).bind(hedef, 0, 0, 0, Date.now()).run();
           mesaj = hedef + " konusturuldu";
         } else if (aksiyon === "yardimci") {
           if (!ayniKlan) return jsonResponse({ hata: "Hedef bu klanin uyesi degil" }, 400);
