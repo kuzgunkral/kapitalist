@@ -302,7 +302,13 @@ async function supaKaydet(kullaniciAdi, veri) {
     madalyalar: _g.madalyalar, started: _g.started,
     _oyuncuAdi: _g._oyuncuAdi, _klanCezaBitis: _g._klanCezaBitis,
     kredilerSaniye: _g.kredilerSaniye, lastDay: _g.lastDay,
-    gunlukBonus: _g.gunlukBonus
+    gunlukBonus: _g.gunlukBonus,
+    // Elmasla alinan kilitler — bulutta kalici (F5'te kilitlenme bug'i)
+    borsaAnaBotKilidi: _g.borsaAnaBotKilidi,
+    buyBotUnlocked: _g.buyBotUnlocked,
+    bankaBotUnlocked: _g.bankaBotUnlocked,
+    borsaBotUnlocked: _g.borsaBotUnlocked,
+    botKilitleri: (function(){var o={};try{Object.keys(_g.borsaHisse||{}).forEach(function(kod){var h=_g.borsaHisse[kod]||{};if(h.botUnlocked||h.botSatUnlocked){o[kod]={botUnlocked:!!h.botUnlocked,botSatUnlocked:!!h.botSatUnlocked};}});}catch(e){}return o;})()
   };
   var kadi = window._supaUser.user_metadata && window._supaUser.user_metadata.kullanici_adi || kullaniciAdi || '';
   var token = getCFToken();
@@ -18566,9 +18572,9 @@ function sohbetYukle(){
       var t=new Date(m.zaman).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"});
       var kadi=window._currentUser||'';
       var renk=m.kullanici_adi===kadi?"#60a5fa":"#10b981";
-      // Adimdan bahsedildi mi? (kelime siniri ile; "Ahmet" "Ahmetin" içinde yakalanmasin diye basit kontrol)
-      var _benimAd=kadi||'';
-      var _bahsedildi=_benimAd&&m.kullanici_adi!==_benimAd&&m.mesaj.indexOf(_benimAd)>=0;
+      // Adimdan bahsedildi mi? (case-insensitive; "vito" = "Vito")
+      var _benimAd=(kadi||'').toLowerCase();
+      var _bahsedildi=_benimAd&&m.kullanici_adi&&(m.kullanici_adi.toLowerCase()!==_benimAd)&&m.mesaj&&m.mesaj.toLowerCase().indexOf(_benimAd)>=0;
       if(_bahsedildi){
         d.style.background="rgba(245,158,11,0.12)";
         d.style.borderLeft="3px solid #f59e0b";
@@ -18616,14 +18622,22 @@ function botKilitKaydet(){
   try{
     var k=_botKilitAnahtar();
     if(!window._currentUser)return;
+    // Diğer elmas kilitleri de yedeğe ekle (satın alma botu, banka botu, borsa botu)
+    var _ek={};
+    if(G.buyBotUnlocked)_ek.buy=1;
+    if(G.bankaBotUnlocked)_ek.banka=1;
+    if(G.borsaBotUnlocked)_ek.borsabot=1;
     if(!G.borsaAnaBotKilidi){
       var _al={},_sat={};
       if(G.borsaHisse){Object.keys(G.borsaHisse).forEach(function(kod){
         if(G.borsaHisse[kod].botUnlocked)_al[kod]=1;
         if(G.borsaHisse[kod].botSatUnlocked)_sat[kod]=1;
       });}
-      localStorage.setItem(k,JSON.stringify({ana:1,al:_al,sat:_sat}));
-    } else localStorage.removeItem(k);
+      localStorage.setItem(k,JSON.stringify({ana:1,al:_al,sat:_sat,ek:_ek}));
+    } else {
+      if(Object.keys(_ek).length)localStorage.setItem(k,JSON.stringify({ana:0,ek:_ek}));
+      else localStorage.removeItem(k);
+    }
   }catch(e){}
 }
 function botKilitUygula(){
@@ -18632,14 +18646,31 @@ function botKilitUygula(){
     var raw=localStorage.getItem(_botKilitAnahtar());
     if(!raw)return;
     var kl=JSON.parse(raw);
+    var _degisti=false;
     if(kl&&kl.ana&&G.borsaAnaBotKilidi!==false){
-      G.borsaAnaBotKilidi=false;
+      G.borsaAnaBotKilidi=false;_degisti=true;
       if(!G.borsaHisse)G.borsaHisse={};
-      if(kl.al)Object.keys(kl.al).forEach(function(kod){if(!G.borsaHisse[kod])G.borsaHisse[kod]={};G.borsaHisse[kod].botUnlocked=true;});
-      if(kl.sat)Object.keys(kl.sat).forEach(function(kod){if(!G.borsaHisse[kod])G.borsaHisse[kod]={};G.borsaHisse[kod].botSatUnlocked=true;});
+      if(kl.al)Object.keys(kl.al).forEach(function(kod){if(!G.borsaHisse[kod])G.borsaHisse[kod]={};if(!G.borsaHisse[kod].botUnlocked){G.borsaHisse[kod].botUnlocked=true;_degisti=true;}});
+      if(kl.sat)Object.keys(kl.sat).forEach(function(kod){if(!G.borsaHisse[kod])G.borsaHisse[kod]={};if(!G.borsaHisse[kod].botSatUnlocked){G.borsaHisse[kod].botSatUnlocked=true;_degisti=true;}});
     }
+    if(kl&&kl.ek){
+      if(kl.ek.buy&&!G.buyBotUnlocked){G.buyBotUnlocked=true;_degisti=true;}
+      if(kl.ek.banka&&!G.bankaBotUnlocked){G.bankaBotUnlocked=true;_degisti=true;}
+      if(kl.ek.borsabot&&!G.borsaBotUnlocked){G.borsaBotUnlocked=true;_degisti=true;}
+    }
+    if(_degisti&&typeof renderHeader==='function'){try{renderHeader();}catch(e){}}
   }catch(e){}
 }
+// Acilis sonrasi 30 sn boyunca saniyede bir kontrol et — bulut verisi gec yuklenip
+// kilitleri ezerse otomatik geri getir (watchdog)
+(function(){
+  var _kilitSayac=0;
+  var _kilitTimer=setInterval(function(){
+    _kilitSayac++;
+    try{ if(window._gameOpen&&typeof botKilitUygula==='function')botKilitUygula(); }catch(e){}
+    if(_kilitSayac>=30)clearInterval(_kilitTimer);
+  },1000);
+})();
 function pmEngelliListe(){try{return JSON.parse(localStorage.getItem('_pmEngelliler')||'{}')||{};}catch(e){return {};}}
 function pmEngelliToggle(kadi){
   if(!kadi)return;
@@ -18829,8 +18860,9 @@ function gDMMinimize(){
 }
 // DM popup açıkken canlı yenileme — yeni mesajlar anlık düşer
 setInterval(function(){try{var pp=document.getElementById('dmPopup');if(pp&&pp.style.display!=='none'&&window._dmAktifKadi)gDMYukle(window._dmAktifKadi);}catch(e){}},4000);
-// Klan sohbeti canlı yenileme — F5'e gerek yok; klan tabındayken 4 sn'de bir buluttan çeker
-setInterval(function(){try{if(window._activeTab==='klan'&&window.G&&G.klan&&G.klan.kuruldu&&typeof klanSohbetBulutYukle==='function')klanSohbetBulutYukle();}catch(e){}},4000);
+// Klan sohbeti canlı yenileme — klan kuruluysa HER ZAMAN çeker (başka sekmedeyken
+// adından bahsedilince sekme blink + baloncuk bildirimi için); render sadece klan tabındayken yapılır
+setInterval(function(){try{if(window.G&&G.klan&&G.klan.kuruldu&&typeof klanSohbetBulutYukle==='function')klanSohbetBulutYukle();}catch(e){}},4000);
 function klDavetBannerGoster(davetler){
   var old=document.getElementById('klanDavetPopup');if(old)old.remove();
   if(!(davetler||[]).length)return;
@@ -76951,6 +76983,18 @@ function load() {
     }
     // Elmasla acilan bot kilitlerini geri yukle (bulut save'de bulunmadiklari icin)
     try{ if(typeof botKilitUygula==='function') botKilitUygula(); }catch(_e){}
+    // Bulut save'den gelen botKilitleri'ni borsaHisse'ye uygula (ezmeden)
+    try{
+      if(sv.botKilitleri){
+        if(!G.borsaHisse)G.borsaHisse={};
+        Object.keys(sv.botKilitleri).forEach(function(kod){
+          var bk=sv.botKilitleri[kod]||{};
+          if(!G.borsaHisse[kod])G.borsaHisse[kod]={};
+          if(bk.botUnlocked)G.borsaHisse[kod].botUnlocked=true;
+          if(bk.botSatUnlocked)G.borsaHisse[kod].botSatUnlocked=true;
+        });
+      }
+    }catch(_e){}
     return true;
   } catch(e) { return false; }
 }
@@ -109178,10 +109222,10 @@ async function klanMesajlariYukle() {
   _msj.forEach(function(m){
     var t=new Date(m.zaman);
     var ts=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0');
-    var _isMe=(m.oyuncu===(G._oyuncuAdi||'Ben')||m.oyuncu==='Ben');
-    // Klan adimdan bahsedildi mi? -> mesaj baloncuğu yeşil çerçeve + "gördüm" tıkı
-    var _benAd=G._oyuncuAdi||'Ben';
-    var _bahs=!_isMe&&m.mesaj&&m.mesaj.indexOf(_benAd)>=0;
+    var _benAd=(G._oyuncuAdi||window._currentUser||'').toLowerCase();
+    var _isMe=((m.oyuncu||'').toLowerCase()===_benAd)||m.oyuncu==='Ben';
+    // Klan adimdan bahsedildi mi? -> mesaj baloncuğu yeşil çerçeve + "gördüm" tıkı (case-insensitive)
+    var _bahs=!_isMe&&_benAd&&m.mesaj&&m.mesaj.toLowerCase().indexOf(_benAd)>=0;
     var _goruldu=!_bahs||(window._klanMentionGorulen&&window._klanMentionGorulen[m.id]);
     if(_bahs&&!_goruldu){
       if(!window._klanMentionYeni)window._klanMentionYeni={};
@@ -109602,8 +109646,8 @@ async function klanSohbetBulutYukle() {
         G.klan.mesajlar.push({id:m.id,oyuncu:m.kullanici_adi,mesaj:m.mesaj,zaman:m.zaman});_degisti=true;
         // Klan sohbetinde adimdan bahsedildiyse (klan tabindayken degilsek) sekme yesil yanip sonsun
         try{
-          var _benAd=G._oyuncuAdi||'Ben';
-          if(window._activeTab!=='klan'&&m.kullanici_adi!==_benAd&&m.kullanici_adi!=='Ben'&&m.mesaj&&m.mesaj.indexOf(_benAd)>=0){
+          var _benAd=(G._oyuncuAdi||window._currentUser||'').toLowerCase();
+          if(_benAd&&window._activeTab!=='klan'&&m.kullanici_adi&&m.kullanici_adi.toLowerCase()!==_benAd&&m.mesaj&&m.mesaj.toLowerCase().indexOf(_benAd)>=0){
             if(typeof klanTabBlink==='function')klanTabBlink();
             if(typeof pmBekleyenEkle==='function'&&G.klan&&G.klan.ad)pmBekleyenEkle('⚔️ '+G.klan.ad,m.mesaj);
           }
