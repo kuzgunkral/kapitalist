@@ -1068,12 +1068,32 @@ var index_default = {
         const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 400);
         await ekTablolar(env);
-        await env.DB.prepare("UPDATE kullanicilar SET klan_ceza_until=? WHERE id=?").bind(Date.now() + 72 * 60 * 60 * 1000, uid).run();
+        // reset:true => oyunu sifirlama akisindan cagri; 72 saat ceza YOK
+        var _resetCikis = false;
+        try { const _b = await request.json(); if (_b && _b.reset) _resetCikis = true; } catch (_e) {}
+        if (!_resetCikis) {
+          await env.DB.prepare("UPDATE kullanicilar SET klan_ceza_until=? WHERE id=?").bind(Date.now() + 72 * 60 * 60 * 1000, uid).run();
+        }
         if (uyelik.rol === "lider") {
-          // Lider ayrilirsa klan tamamen silinir (uyeler + log + sohbet)
+          // Lider ayrilirsa klan SILINMEZ: once yardimci, yoksa EN ESKI uye (ilk katilan)
+          // yeni lider olur. Kimse kalmazsa klan tamamen silinir.
+          var _yeniLider = null;
+          var _y = await env.DB.prepare("SELECT kullanici_id FROM klan_uyeler WHERE klan_id=? AND rol='yardimci' AND kullanici_id!=? ORDER BY rowid LIMIT 1").bind(uyelik.klan_id, uid).first();
+          if (_y) _yeniLider = _y.kullanici_id;
+          else {
+            var _u = await env.DB.prepare("SELECT kullanici_id FROM klan_uyeler WHERE klan_id=? AND kullanici_id!=? ORDER BY rowid LIMIT 1").bind(uyelik.klan_id, uid).first();
+            if (_u) _yeniLider = _u.kullanici_id;
+          }
+          if (_yeniLider) {
+            await env.DB.prepare("UPDATE klan_uyeler SET rol='lider' WHERE kullanici_id=?").bind(_yeniLider).run();
+            await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, (k ? k.kullanici_adi : "Lider") + " klandan ayrildi, yeni lider atandi", Date.now()).run();
+            return jsonResponse({ basarili: true, lider_devredildi: true });
+          }
+          // Kimse kalmadi: klan tamamen silinir (uyeler + log + sohbet + davetler)
           await env.DB.prepare("DELETE FROM klan_uyeler WHERE klan_id=?").bind(uyelik.klan_id).run();
           await env.DB.prepare("DELETE FROM klan_log WHERE klan_id=?").bind(uyelik.klan_id).run();
           await env.DB.prepare("DELETE FROM klan_sohbet WHERE klan_id=?").bind(uyelik.klan_id).run();
+          await env.DB.prepare("DELETE FROM klan_davetler WHERE klan_id=?").bind(uyelik.klan_id).run();
           await env.DB.prepare("DELETE FROM klanlar WHERE id=?").bind(uyelik.klan_id).run();
           return jsonResponse({ basarili: true, klan_silindi: true });
         }
@@ -1218,11 +1238,23 @@ var index_default = {
         const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ hata: "Klana uyesiniz degil" }, 400);
         if (uyelik.rol === "lider") {
-          const { results: diger } = await env.DB.prepare("SELECT kullanici_id FROM klan_uyeler WHERE klan_id=? AND kullanici_id!=?").bind(uyelik.klan_id, uid).all();
-          if (diger && diger.length > 0) return jsonResponse({ hata: "Lider olmak icin once liderlik devredin" }, 400);
-          await env.DB.prepare("DELETE FROM klanlar WHERE id=?").bind(uyelik.klan_id).run();
-          await env.DB.prepare("DELETE FROM klan_log WHERE klan_id=?").bind(uyelik.klan_id).run();
-          await env.DB.prepare("DELETE FROM klan_sohbet WHERE klan_id=?").bind(uyelik.klan_id).run();
+          // Lider ayrilirsa: once yardimci, yoksa EN ESKI uye yeni lider olur (klan yasar).
+          // Kimse kalmazsa klan silinir.
+          var _yeniLider2 = null;
+          var _y2 = await env.DB.prepare("SELECT kullanici_id FROM klan_uyeler WHERE klan_id=? AND rol='yardimci' AND kullanici_id!=? ORDER BY rowid LIMIT 1").bind(uyelik.klan_id, uid).first();
+          if (_y2) _yeniLider2 = _y2.kullanici_id;
+          else {
+            var _u2 = await env.DB.prepare("SELECT kullanici_id FROM klan_uyeler WHERE klan_id=? AND kullanici_id!=? ORDER BY rowid LIMIT 1").bind(uyelik.klan_id, uid).first();
+            if (_u2) _yeniLider2 = _u2.kullanici_id;
+          }
+          if (_yeniLider2) {
+            await env.DB.prepare("UPDATE klan_uyeler SET rol='lider' WHERE kullanici_id=?").bind(_yeniLider2).run();
+            await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(crypto.randomUUID(), uyelik.klan_id, k.kullanici_adi + " klandan ayrildi, yeni lider atandi", Date.now()).run();
+          } else {
+            await env.DB.prepare("DELETE FROM klanlar WHERE id=?").bind(uyelik.klan_id).run();
+            await env.DB.prepare("DELETE FROM klan_log WHERE klan_id=?").bind(uyelik.klan_id).run();
+            await env.DB.prepare("DELETE FROM klan_sohbet WHERE klan_id=?").bind(uyelik.klan_id).run();
+          }
         } else {
           const logId = crypto.randomUUID();
           await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(logId, uyelik.klan_id, k.kullanici_adi + " klandan ayrildi", Date.now()).run();

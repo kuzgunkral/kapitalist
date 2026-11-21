@@ -98302,6 +98302,18 @@ function doReset() {
   // Bot kilit kaydini da sil — sifirlama sonrasi botlar tekrar kilitli baslasin
   try{ localStorage.removeItem('kuz_botKilit_'+(window._currentUser||'anon')); }catch(e){}
   try{ localStorage.removeItem('kuz_botKilit_anon'); }catch(e){}
+  // PM filigran + gorulen temizle — sifirlama sonrasi eski PM'ler tekrar yanmasin.
+  // (once su anki zamana cekilir ki acilista eski DM'ler "yeni" gorunmesin)
+  try{ localStorage.setItem('_pmSonZaman', String(Date.now())); }catch(e){}
+  try{ localStorage.removeItem('kuz_pmGorulen_'+(window._currentUser||'anon')); }catch(e){}
+  // Klan uyeliginden sessiz cik (reset akisi: 72 saat ceza YOK). Liderse klan bulutta silinir.
+  // Arka planda; reload'i beklemesin diye fetch promise'i reload'a bagli degil.
+  try{
+    var _tokK = getCFToken();
+    if(_tokK && window._currentUser){
+      fetch(CF_API+'/klan/ayril', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+_tokK}, body:JSON.stringify({reset:true})}).catch(function(){});
+    }
+  }catch(_eK){}
   // Buluttaki kaydi da sil - yoksa acilista eski kayit geri yuklenir
   // Cift silme: ilk /sil'den sonra havaalaninda bekleyen /save istekleri biter, ikinci /sil temizler
   var _tok = getCFToken();
