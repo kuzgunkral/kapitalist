@@ -19203,7 +19203,7 @@ function gDMPopup(kadi){
   var _yon=false;
   try{_yon=(window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci');}catch(e){}
   p.innerHTML='<div style="background:#0a1628;border:1px solid #1e3a5f;border-radius:12px;padding:14px;width:320px;max-width:92vw;box-sizing:border-box">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#10b981">💬 '+kadi+'<span id="_dmEngelBtn" onclick="pmEngelliToggle(window._dmAktifKadi)" title="'+(_engMe?'Engeli Aç':'Engelle')+'" style="cursor:pointer;font-size:12px;padding:1px 7px;margin-left:8px;border-radius:4px;color:'+(_engMe?'#10b981':'#ef4444')+'">'+(_engMe?'✅':'🚫')+'</span></span><span style="display:flex;gap:4px;align-items:center"><span onclick="gDMMinimize()" title="Küçült (sağ alta iner)" style="cursor:pointer;color:#6080a0;font-size:14px;padding:2px 8px;border-radius:4px">➖</span><span onclick="gDMKapatVeSil()" title="Kapat + konuşma geçmişini sil" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px;border-radius:4px">✕</span></span></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#10b981">💬 '+kadi+'<span id="_dmEngelBtn" onclick="pmEngelliToggle(window._dmAktifKadi)" title="'+(_engMe?'Engeli Aç':'Engelle')+'" style="cursor:pointer;font-size:12px;padding:1px 7px;margin-left:8px;border-radius:4px;color:'+(_engMe?'#10b981':'#ef4444')+'">'+(_engMe?'✅':'🚫')+'</span></span><span style="display:flex;gap:4px;align-items:center"><span onclick="gDMMinimize()" title="Küçült (sağ alta iner)" style="cursor:pointer;color:#6080a0;font-size:14px;padding:2px 8px;border-radius:4px">➖</span><span onclick="gDMKapat()" title="Kapat (geçmiş korunur)" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px;border-radius:4px">✕</span></span></div>'
     +'<div id="_dmList" style="height:180px;overflow-y:auto;background:#060f1a;border:1px solid #1e3a5f;border-radius:8px;padding:6px;margin-bottom:8px;font-size:11px;line-height:1.6"></div>'
     +(_yon&&kadi!==(window._currentUser||'')?'<button id="_dmDavetBtn" onclick="klDavetEt(\''+kadi+'\')" style="width:100%;margin-bottom:8px;padding:6px;background:#2a1a4a;border:1px solid #7c3aed;border-radius:6px;color:#a78bfa;font-size:11px;font-weight:700;cursor:pointer">⚔️ Klana Davet Et</button>':'')
     +(_gYetki.admin&&kadi!==(window._currentUser||'')?'<button id="_dmKisitBtn" onclick="gAksiyonGonder(\''+kadi+'\',\'mute\',60)" style="width:100%;margin-bottom:8px;padding:6px;background:#1a0f05;border:1px solid #f97316;border-radius:6px;color:#f97316;font-size:11px;font-weight:700;cursor:pointer">🔒 Kısıtla (60dk)</button>':'')
@@ -19211,7 +19211,7 @@ function gDMPopup(kadi){
     +'</div>';
   document.body.appendChild(p);
   window._dmAktifKadi=kadi;
-  p.onclick=function(e){if(e.target===p)gDMKapat();};
+  // PM arka plana tiklayinca KAPANMAZ — sadece ➖ (küçült) veya ✕ (kapat) ile kapanır
   if(_gYetki.admin)gMuteListeGetir(function(){
     var _kb=document.getElementById('_dmKisitBtn');
     if(_kb&&window._gMuteListe&&window._gMuteListe[kadi]>Date.now())_kb.textContent='🔊 Kısıtlamayı Aç';
