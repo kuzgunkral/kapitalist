@@ -95,7 +95,7 @@ __name(kadiBul, "kadiBul");
 async function ekTablolar(env) {
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS sohbet_durum (k TEXT PRIMARY KEY, kapali INTEGER DEFAULT 0)").run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS raporlar (id TEXT PRIMARY KEY, mesaj_id TEXT, kullanici_adi TEXT, mesaj TEXT, rapor_eden TEXT, zaman INTEGER)").run();
-  await env.DB.prepare("CREATE TABLE IF NOT EXISTS dm (id TEXT PRIMARY KEY, gonderen TEXT, alici TEXT, mesaj TEXT, zaman INTEGER)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS dm (id TEXT PRIMARY KEY, gonderen TEXT, alici TEXT, mesaj TEXT, zaman INTEGER, sil_g INTEGER DEFAULT 0, sil_a INTEGER DEFAULT 0)").run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS klan_davetler (id TEXT PRIMARY KEY, klan_id TEXT, alici_kadi TEXT, gonderen TEXT, zaman INTEGER)").run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS online_durum (kullanici_adi TEXT PRIMARY KEY, son_aktif INTEGER)").run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS klan_banka_log (id TEXT PRIMARY KEY, klan_id TEXT, kullanici_adi TEXT, miktar REAL, tur TEXT, zaman INTEGER)").run();
@@ -105,6 +105,8 @@ async function ekTablolar(env) {
   try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN toplam_servet REAL DEFAULT 0").run(); } catch (e) {}
   try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN toplam_elmas REAL DEFAULT 0").run(); } catch (e) {}
   try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN son_gun INTEGER DEFAULT 1").run(); } catch (e) {}
+  try { await env.DB.prepare("ALTER TABLE dm ADD COLUMN sil_g INTEGER DEFAULT 0").run(); } catch (e) {}
+  try { await env.DB.prepare("ALTER TABLE dm ADD COLUMN sil_a INTEGER DEFAULT 0").run(); } catch (e) {}
 }
 __name(ekTablolar, "ekTablolar");
 // Kullanici bilgi karti icin istatistik guncelle (/save ile birlikte cagirilir)
@@ -505,11 +507,21 @@ var index_default = {
         if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
         const benim = await kadiBul(env, uid);
         if (!benim) return jsonResponse({ hata: "Kullanici bulunamadi" }, 401);
-        const { hedef } = await request.json();
+        const { hedef, tumu } = await request.json();
+        if (tumu === true) {
+          // Oyundan cikis: kullanici kendi tarafindaki TUM PM'leri siler
+          await env.DB.prepare("UPDATE dm SET sil_g=1 WHERE gonderen=?").bind(benim).run();
+          await env.DB.prepare("UPDATE dm SET sil_a=1 WHERE alici=?").bind(benim).run();
+          const del = await env.DB.prepare("DELETE FROM dm WHERE sil_g=1 AND sil_a=1").run();
+          return jsonResponse({ basarili: true });
+        }
         if (!hedef || typeof hedef !== "string") return jsonResponse({ hata: "hedef gerekli" }, 400);
-        const r = await env.DB.prepare("DELETE FROM dm WHERE (gonderen=? AND alici=?) OR (gonderen=? AND alici=?)")
-          .bind(benim, hedef, hedef, benim).run();
-        return jsonResponse({ basarili: true, silinen: (r.meta && r.meta.changes) || 0 });
+        // ✕ ile kapatma: SADECE yapan taraf icin silinir; karsi taraf kendi silmedikce gormeye devam eder.
+        // Iki taraf da sildiginde satir tamamen silinir.
+        await env.DB.prepare("UPDATE dm SET sil_g=1 WHERE gonderen=? AND alici=?").bind(benim, hedef).run();
+        await env.DB.prepare("UPDATE dm SET sil_a=1 WHERE alici=? AND gonderen=?").bind(benim, hedef).run();
+        await env.DB.prepare("DELETE FROM dm WHERE ((gonderen=? AND alici=?) OR (gonderen=? AND alici=?)) AND sil_g=1 AND sil_a=1").bind(benim, hedef, hedef, benim).run();
+        return jsonResponse({ basarili: true });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -594,8 +606,8 @@ var index_default = {
         const hedef = url.searchParams.get("hedef");
         if (!hedef) return jsonResponse({ hata: "hedef gerekli" }, 400);
         const { results } = await env.DB.prepare(
-          "SELECT gonderen,alici,mesaj,zaman FROM dm WHERE (gonderen=? AND alici=?) OR (gonderen=? AND alici=?) ORDER BY zaman DESC LIMIT 30"
-        ).bind(benim, hedef, hedef, benim).all();
+          "SELECT gonderen,alici,mesaj,zaman FROM dm WHERE ((gonderen=? AND alici=?) OR (gonderen=? AND alici=?)) AND NOT ((gonderen=? AND sil_g=1) OR (alici=? AND sil_a=1)) ORDER BY zaman DESC LIMIT 30"
+        ).bind(benim, hedef, hedef, benim, benim, benim).all();
         return jsonResponse({ mesajlar: (results || []).reverse() });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
@@ -650,7 +662,7 @@ var index_default = {
         const benim = await kadiBul(env, uid);
         const since = parseInt(url.searchParams.get("since") || "0", 10) || 0;
         const { results } = await env.DB.prepare(
-          "SELECT gonderen, mesaj, zaman FROM dm WHERE alici=? AND zaman>? ORDER BY zaman DESC LIMIT 20"
+          "SELECT gonderen, mesaj, zaman FROM dm WHERE alici=? AND zaman>? AND (sil_a IS NULL OR sil_a=0) ORDER BY zaman DESC LIMIT 20"
         ).bind(benim, since).all();
         return jsonResponse({ bildirimler: results || [] });
       } catch (e) {

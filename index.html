@@ -18493,7 +18493,7 @@ button,input,select{font-family:inherit}
 <script>
 function anasayfaGuncelle(){if(!window.G)return;var p=document.getElementById("ana-para");if(p)p.textContent=typeof fmt==="function"?fmt(G.money||0):(G.money||0);var e=document.getElementById("ana-elmas");if(e)e.textContent=typeof fmtElmas==="function"?fmtElmas(G.elmas||0):(G.elmas||0);var g=document.getElementById("ana-gun");if(g)g.textContent="Gun "+(G.day||1);var s=document.getElementById("ana-sehir");if(s)s.textContent=G.city||"-";}
 (function(){var _ol=window.log;window.log=function(msg,tip){if(_ol)_ol.apply(this,arguments);var el=document.getElementById("ana-log");if(el){var d=document.createElement("div");d.style.borderBottom="1px solid #0d1927";d.style.padding="2px 0";d.style.color=tip==="er"?"#ef4444":tip==="sy"?"#f59e0b":tip==="ok"?"#10b981":"#d8e8f8";d.innerHTML=msg;el.appendChild(d);if(el.children.length>100)el.removeChild(el.firstChild);el.scrollTop=el.scrollHeight;}};})();
-setInterval(function(){var t=document.getElementById("tab-anasayfa");if(t&&t.style.display!=="none"){anasayfaGuncelle();sohbetYukle();}},3000);
+setInterval(function(){var t=document.getElementById("tab-anasayfa");if(t&&t.style.display!=="none"){anasayfaGuncelle();sohbetYukle();}try{if(typeof pmBildirimSenk==="function")pmBildirimSenk();}catch(_pe){}},3000);
 var _gMute=false; var _gKapali=false; var _gBanlilar=[]; var _gSeciliMesajlar=[];
 var _gYetki={admin:false,seviye:0,_t:0};
 function gYetkiCek(){
@@ -18879,6 +18879,9 @@ function _pmGorulenKaydet(){
 function pmBildirimSenk(){
   var tok=localStorage.getItem('cf_token')||'';
   if(!tok)return;
+  // Her sekmede PM düşsün: 3sn'lik evrensel döngü de çağırır; çakışmayı önlemek için min 5sn arayla
+  if(window._pmSenkT&&Date.now()-window._pmSenkT<5000)return;
+  window._pmSenkT=Date.now();
   var since=parseInt(localStorage.getItem('_pmSonZaman')||String(Date.now()-300000),10)||0;
   fetch(CF_API+'/dm/bildirim?since='+since,{headers:{'Authorization':'Bearer '+tok}})
   .then(function(r){return r.json();})
@@ -18888,20 +18891,37 @@ function pmBildirimSenk(){
     (d.bildirimler||[]).forEach(function(b){if((b.zaman||0)>_max)_max=b.zaman;});
     try{localStorage.setItem('_pmSonZaman',String(_max));}catch(e){}
     if(!window._pmBildirimGorulen||window._pmGorulenKullanici!==(window._currentUser||'anon'))_pmGorulenYukle();
-    d.bildirimler.slice().reverse().forEach(function(b){
-      var _key=(b.gonderen||'')+'_'+(b.zaman||0);
-      if(window._pmBildirimGorulen[_key])return;
-      window._pmBildirimGorulen[_key]=1;
-      pmBaloncukGoster(b.gonderen,b.mesaj,_key);
-    });
-    _pmGorulenKaydet();
+    window._pmBildirimGorulen=window._pmBildirimGorulen||{};
+    try{
+      d.bildirimler.slice().reverse().forEach(function(b){
+        var _key=(b.gonderen||'')+'_'+(b.zaman||0);
+        if(window._pmBildirimGorulen[_key])return;
+        window._pmBildirimGorulen[_key]=1;
+        pmBaloncukGoster(b.gonderen,b.mesaj,_key);
+      });
+      _pmGorulenKaydet();
+    }catch(e){}
   }).catch(function(){});
 }
 function pmBekleyenSayi(){try{return Object.keys(window._pmBekleyen||{}).length;}catch(e){return 0;}}
 function pmBekleyenEkle(kadi,mesaj,anahtar){
   if((pmEngelliListe()||{})[kadi])return;
   if(!window._pmBekleyen)window._pmBekleyen={};
-  window._pmBekleyen[kadi]={mesaj:mesaj||'',zaman:Date.now(),anahtar:anahtar||''};
+  window._pmBekleyen[kadi]={mesaj:mesaj||'',zaman:Date.now(),anahtar:anahtar||'',okundu:0};
+  pmBaloncukGuncelle();
+}
+// PM okundugunda baloncuk kaybolmaz: yanip sonme durur, sabit kalir
+function pmOkunduIsaretle(kadi){
+  if(!kadi||!window._pmBekleyen||!window._pmBekleyen[kadi])return;
+  window._pmBekleyen[kadi].okundu=1;
+  var _a=window._pmBekleyen[kadi].anahtar;
+  if(_a){
+    try{
+      if(!window._pmBildirimGorulen||window._pmGorulenKullanici!==(window._currentUser||'anon'))_pmGorulenYukle();
+      window._pmBildirimGorulen[_a]=1;
+      _pmGorulenKaydet();
+    }catch(e){}
+  }
   pmBaloncukGuncelle();
 }
 function pmBekleyenTemizle(kadi){
@@ -18933,16 +18953,19 @@ function pmBaloncukGuncelle(){
   }
   if(!b){
     b=document.createElement('div');b.id='pmBaloncuk';
-    b.style.cssText='position:fixed;right:16px;bottom:80px;z-index:99996;background:#0a1628;border:2px solid #10b981;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:260px;cursor:pointer;animation:pmBlink 1.2s ease-in-out infinite';
+    b.style.cssText='position:fixed;right:16px;bottom:80px;z-index:99996;background:#0a1628;border:2px solid #10b981;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:260px;cursor:pointer';
     document.body.appendChild(b);
   }
+  var _info=bek[kadi]||{};
+  if(_info.okundu){b.style.animation='none';b.style.borderColor='#1e3a5f';}
+  else{b.style.animation='pmBlink 1.2s ease-in-out infinite';b.style.borderColor='#10b981';}
   b.setAttribute('data-kadi',kadi);
   var _n=keys.length;
   var _rozet=_n>1?' <span style="background:#10b981;color:#04120c;border-radius:999px;padding:0 7px;font-size:10px;font-weight:900">'+_n+'</span>':'';
   b.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:12px;font-weight:800;color:#10b981">💬 '+kadi+_rozet+'</span><span onclick="event.stopPropagation();pmBekleyenTemizle(document.getElementById(\'pmBaloncuk\').getAttribute(\'data-kadi\'))" title="Kapat" style="cursor:pointer;color:#6080a0;font-size:12px;padding:0 2px">✕</span></div>'
     +'<div style="font-size:11px;color:#d8e8f8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+String(info.mesaj||'').substring(0,60)+'</div>'
     +'<div style="font-size:9px;color:#4a7090;margin-top:3px">Okumak için tıkla</div>';
-  b.onclick=function(){var _k=b.getAttribute('data-kadi');pmBekleyenTemizle(_k);gDMPopup(_k);};
+  b.onclick=function(){var _k=b.getAttribute('data-kadi');pmOkunduIsaretle(_k);gDMPopup(_k);};
 }
 function pmBaloncukGoster(kadi,mesaj,anahtar){pmBekleyenEkle(kadi,mesaj,anahtar);}
 setInterval(pmBildirimSenk,10000);
@@ -18956,11 +18979,11 @@ function gDMKapat(){
 function gDMKapatVeSil(){
   var k=window._dmAktifKadi;
   if(!k||k===(window._currentUser||'')){gDMKapat();return;}
-  if(!confirm('"'+'\"'+k+'\"'+' ile olan t\u00FCm konu\u015Fma ge\u00E7mi\u015Fi KALICI olarak silinsin mi? (Bu i\u015Flem geri al\u0131namaz, iki taraf i\u00E7in de silinir)'))return;
+  if(!confirm('"'+k+'" ile konuşmayı kendi tarafında silmek istiyor musun? Eski mesajlar senin için kaybolur; karşı taraf kendi ✕ ile onaylamadıkça onda görünmeye devam eder.'))return;
   fetch(CF_API+'/dm/temizle',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({hedef:k})})
   .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
   .then(function(x){
-    if(x.ok){log('🧹 Konuşma geçmişi silindi ('+((x.d.silinen||0))+' mesaj)','ok');}
+    if(x.ok){log('🧹 Konuşma senin tarafında silindi','ok');}
     else{log('⛔ '+(x.d.hata||'Geçmiş silinemedi'),'er');}
   })
   .catch(function(){log('Sunucuya bağlanılamadı','er');});
@@ -19195,8 +19218,8 @@ function gDMYukle(kadi){
     var _onceki=parseInt(el.getAttribute('data-sayi')||'0',10)||0;
     var _yeni=(d.mesajlar||[]).length;
     el.setAttribute('data-sayi',String(_yeni));
-    // Bu sohbet acildiysa kisi okunmus sayilir: baloncuğunu kaldir + bildirim zamanini ilerlet
-    pmBekleyenTemizle(kadi);
+    // Bu sohbet acildiysa: baloncuk kaybolmaz, yanip sonme durur (okundu)
+    pmOkunduIsaretle(kadi);
     var _maxZ=0;
     var ben=window._currentUser||'Ben';var h='';
     (d.mesajlar||[]).forEach(function(m){
@@ -19218,6 +19241,8 @@ function gDMYukle(kadi){
       var _pp=document.getElementById('dmPopup');
       var _mb=document.getElementById('dmMiniBalon');
       if(_pp&&_pp.style.display==='none'&&_mb){_mb.style.animation='pmBlink 1.2s ease-in-out infinite';_mb.style.borderColor='#10b981';}
+      // Popup acikken (okurken) mini balon yanip sonmesin
+      if(_pp&&_pp.style.display!=='none'&&_mb){_mb.style.animation='none';_mb.style.borderColor='#1e3a5f';}
     }
   }).catch(function(){});
 }
@@ -92394,6 +92419,13 @@ function logoutGame() {
   if(typeof mktTimer !== 'undefined' && mktTimer) { clearInterval(mktTimer); mktTimer = null; }
   if(typeof custTimer !== 'undefined' && custTimer) { clearInterval(custTimer); custTimer = null; }
   if(typeof buyBotTimer !== 'undefined' && buyBotTimer) { clearInterval(buyBotTimer); buyBotTimer = null; }
+  // Oyundan cikista tum PM gecmisini (kendi tarafimdaki) sil — karsi taraf kendi silmedikce gorur
+  try{
+    var _lk=localStorage.getItem('cf_token')||'';
+    if(_lk&&window._currentUser){
+      fetch(CF_API+'/dm/temizle',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+_lk},body:JSON.stringify({tumu:true}),keepalive:true}).catch(function(){});
+    }
+  }catch(e){}
   G.started = false;
   window._gameOpen = false;
   window._currentUser = null;
@@ -97427,6 +97459,13 @@ function fluctuate() {
 // Sayfa kapatilmadan/yenilemeden once Supabase'e aninda kaydet
 window.addEventListener('beforeunload', function() {
   if(window._resetDevam) return; // sifirlama: eski G'yi geri yazma, bulut save firlatma
+  // Sekme kapanirken/oyundan cikarken PM gecmisini (kendi tarafimdaki) sil
+  try{
+    var _bk=localStorage.getItem('cf_token')||'';
+    if(_bk&&window._currentUser&&window._gameOpen){
+      fetch(CF_API+'/dm/temizle',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+_bk},body:JSON.stringify({tumu:true}),keepalive:true}).catch(function(){});
+    }
+  }catch(e){}
   if(window._supaUser && window._currentUser && typeof G !== 'undefined') {
     if(window._supaSaveTimer) { clearTimeout(window._supaSaveTimer); window._supaSaveTimer = null; }
     // Sync kayit (fetch API ile)
