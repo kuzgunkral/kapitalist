@@ -18988,7 +18988,6 @@ function gDMKapat(){
 function gDMKapatVeSil(){
   var k=window._dmAktifKadi;
   if(!k||k===(window._currentUser||'')){gDMKapat();return;}
-  if(!confirm('"'+k+'" ile konuşmayı kendi tarafında silmek istiyor musun? Eski mesajlar senin için kaybolur; karşı taraf kendi ✕ ile onaylamadıkça onda görünmeye devam eder.'))return;
   fetch(CF_API+'/dm/temizle',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({hedef:k})})
   .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
   .then(function(x){
