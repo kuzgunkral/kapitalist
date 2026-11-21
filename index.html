@@ -308,6 +308,12 @@ async function supaKaydet(kullaniciAdi, veri) {
     buyBotUnlocked: _g.buyBotUnlocked,
     bankaBotUnlocked: _g.bankaBotUnlocked,
     borsaBotUnlocked: _g.borsaBotUnlocked,
+    globalKarKilidi: _g.globalKarKilidi,
+    borsaUnlocked: _g.borsaUnlocked,
+    kriptoAcik: _g.kriptoAcik,
+    kriptoAnaBotKilidi: _g.kriptoAnaBotKilidi,
+    ihaleGonderBotKilidi: _g.ihaleGonderBotKilidi,
+    ihaleTeklifBotKilidi: _g.ihaleTeklifBotKilidi,
     botKilitleri: (function(){var o={};try{Object.keys(_g.borsaHisse||{}).forEach(function(kod){var h=_g.borsaHisse[kod]||{};if(h.botUnlocked||h.botSatUnlocked){o[kod]={botUnlocked:!!h.botUnlocked,botSatUnlocked:!!h.botSatUnlocked};}});}catch(e){}return o;})()
   };
   var kadi = window._supaUser.user_metadata && window._supaUser.user_metadata.kullanici_adi || kullaniciAdi || '';
@@ -18627,6 +18633,13 @@ function botKilitKaydet(){
     if(G.buyBotUnlocked)_ek.buy=1;
     if(G.bankaBotUnlocked)_ek.banka=1;
     if(G.borsaBotUnlocked)_ek.borsabot=1;
+    // Genel Oran kilidi (true = acilmis), borsa/kripto giris kilitleri, kripto & ihale botlari
+    if(G.globalKarKilidi)_ek.genelOran=1;
+    if(G.borsaUnlocked)_ek.borsaGiris=1;
+    if(G.kriptoAcik)_ek.kriptoGiris=1;
+    if(G.kriptoAnaBotKilidi===false)_ek.kriptoBot=1;
+    if(G.ihaleGonderBotKilidi===true)_ek.ihaleGonderBot=1;
+    if(G.ihaleTeklifBotKilidi===true)_ek.ihaleTeklifBot=1;
     if(!G.borsaAnaBotKilidi){
       var _al={},_sat={};
       if(G.borsaHisse){Object.keys(G.borsaHisse).forEach(function(kod){
@@ -18657,6 +18670,13 @@ function botKilitUygula(){
       if(kl.ek.buy&&!G.buyBotUnlocked){G.buyBotUnlocked=true;_degisti=true;}
       if(kl.ek.banka&&!G.bankaBotUnlocked){G.bankaBotUnlocked=true;_degisti=true;}
       if(kl.ek.borsabot&&!G.borsaBotUnlocked){G.borsaBotUnlocked=true;_degisti=true;}
+      // Genel Oran, borsa/kripto giris ve kripto/ihale bot kilitleri
+      if(kl.ek.genelOran&&!G.globalKarKilidi){G.globalKarKilidi=true;_degisti=true;}
+      if(kl.ek.borsaGiris&&!G.borsaUnlocked){G.borsaUnlocked=true;_degisti=true;}
+      if(kl.ek.kriptoGiris&&!G.kriptoAcik){G.kriptoAcik=true;_degisti=true;}
+      if(kl.ek.kriptoBot&&G.kriptoAnaBotKilidi!==false){G.kriptoAnaBotKilidi=false;_degisti=true;}
+      if(kl.ek.ihaleGonderBot&&!G.ihaleGonderBotKilidi){G.ihaleGonderBotKilidi=true;_degisti=true;}
+      if(kl.ek.ihaleTeklifBot&&!G.ihaleTeklifBotKilidi){G.ihaleTeklifBotKilidi=true;_degisti=true;}
     }
     if(_degisti&&typeof renderHeader==='function'){try{renderHeader();}catch(e){}}
   }catch(e){}
