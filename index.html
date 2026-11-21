@@ -18671,23 +18671,45 @@ function pmBildirimSenk(){
     });
   }).catch(function(){});
 }
-function pmBaloncukGoster(kadi,mesaj){
+function pmBekleyenSayi(){try{return Object.keys(window._pmBekleyen||{}).length;}catch(e){return 0;}}
+function pmBekleyenEkle(kadi,mesaj){
   if((pmEngelliListe()||{})[kadi])return;
-  var old=document.getElementById('pmBaloncuk');if(old)old.remove();
+  if(!window._pmBekleyen)window._pmBekleyen={};
+  window._pmBekleyen[kadi]={mesaj:mesaj||'',zaman:Date.now()};
+  pmBaloncukGuncelle();
+}
+function pmBekleyenTemizle(kadi){
+  if(!kadi||!window._pmBekleyen||!window._pmBekleyen[kadi])return;
+  delete window._pmBekleyen[kadi];
+  pmBaloncukGuncelle();
+}
+function pmBaloncukGuncelle(){
+  var b=document.getElementById('pmBaloncuk');
+  var bek=window._pmBekleyen||{};
+  var keys=Object.keys(bek);
+  if(!keys.length){if(b)b.remove();return;}
+  var kadi=keys[keys.length-1];
+  var info=bek[kadi]||{mesaj:''};
   if(!document.getElementById('pmBlinkStyle')){
     var s=document.createElement('style');s.id='pmBlinkStyle';
     s.textContent='@keyframes pmBlink{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,.35)}50%{box-shadow:0 0 14px 5px rgba(16,185,129,.55)}}@media (prefers-reduced-motion: reduce){#pmBaloncuk{animation:none!important}}';
     document.head.appendChild(s);
   }
-  var b=document.createElement('div');b.id='pmBaloncuk';
-  b.style.cssText='position:fixed;right:16px;bottom:80px;z-index:99996;background:#0a1628;border:2px solid #10b981;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:260px;cursor:pointer;animation:pmBlink 1.2s ease-in-out infinite';
-  b.innerHTML='<div style="font-size:12px;font-weight:800;color:#10b981">💬 '+kadi+'</div>'
-    +'<div style="font-size:11px;color:#d8e8f8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+String(mesaj||'').substring(0,60)+'</div>';
-  b.onclick=function(){b.remove();gDMPopup(kadi);};
-  document.body.appendChild(b);
-  setTimeout(function(){var el=document.getElementById('pmBaloncuk');if(el&&el===b)el.remove();},30000);
+  if(!b){
+    b=document.createElement('div');b.id='pmBaloncuk';
+    b.style.cssText='position:fixed;right:16px;bottom:80px;z-index:99996;background:#0a1628;border:2px solid #10b981;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:260px;cursor:pointer;animation:pmBlink 1.2s ease-in-out infinite';
+    document.body.appendChild(b);
+  }
+  b.setAttribute('data-kadi',kadi);
+  var _n=keys.length;
+  var _rozet=_n>1?' <span style="background:#10b981;color:#04120c;border-radius:999px;padding:0 7px;font-size:10px;font-weight:900">'+_n+'</span>':'';
+  b.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:12px;font-weight:800;color:#10b981">💬 '+kadi+_rozet+'</span><span onclick="event.stopPropagation();pmBekleyenTemizle(document.getElementById(\'pmBaloncuk\').getAttribute(\'data-kadi\'))" title="Kapat" style="cursor:pointer;color:#6080a0;font-size:12px;padding:0 2px">✕</span></div>'
+    +'<div style="font-size:11px;color:#d8e8f8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+String(info.mesaj||'').substring(0,60)+'</div>'
+    +'<div style="font-size:9px;color:#4a7090;margin-top:3px">Okumak için tıkla</div>';
+  b.onclick=function(){var _k=b.getAttribute('data-kadi');pmBekleyenTemizle(_k);gDMPopup(_k);};
 }
-setInterval(pmBildirimSenk,30000);
+function pmBaloncukGoster(kadi,mesaj){pmBekleyenEkle(kadi,mesaj);}
+setInterval(pmBildirimSenk,10000);
 setTimeout(pmBildirimSenk,2000);
 function gDMKapat(){
   var p=document.getElementById('dmPopup');if(p)p.remove();
@@ -18855,14 +18877,19 @@ function gDMYukle(kadi){
     var _onceki=parseInt(el.getAttribute('data-sayi')||'0',10)||0;
     var _yeni=(d.mesajlar||[]).length;
     el.setAttribute('data-sayi',String(_yeni));
+    // Bu sohbet acildiysa kisi okunmus sayilir: baloncuğunu kaldir + bildirim zamanini ilerlet
+    pmBekleyenTemizle(kadi);
+    var _maxZ=0;
     var ben=window._currentUser||'Ben';var h='';
     (d.mesajlar||[]).forEach(function(m){
+      if((m.zaman||0)>_maxZ)_maxZ=m.zaman;
       var _mine=(m.gonderen===ben||m.gonderen==='Ben');
       var t=new Date(m.zaman).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
       h+='<div style="text-align:'+(_mine?'right':'left')+';margin-bottom:4px"><span style="display:inline-block;max-width:80%;background:'+(_mine?'#0d2a1a':'#0d2a4f')+';border:1px solid #1e3a5f;border-radius:8px;padding:4px 8px;color:#d8e8f8">'+(_mine?'':'<b style="color:#10b981">'+m.gonderen+':</b> ')+m.mesaj+' <span style="font-size:9px;color:#4a7090">'+t+'</span></span></div>';
     });
     if(!h)h='<div style="color:#4a7090;text-align:center;padding:20px 6px;font-size:11px">Henüz mesaj yok. İlk mesajı sen yaz!</div>';
     el.innerHTML=h;el.scrollTop=el.scrollHeight;
+    if(_maxZ){try{var _ez=parseInt(localStorage.getItem('_pmSonZaman')||'0',10)||0;localStorage.setItem('_pmSonZaman',String(Math.max(_maxZ,_ez)));}catch(e){}}
     if(_yeni>_onceki){
       var _pp=document.getElementById('dmPopup');
       var _mb=document.getElementById('dmMiniBalon');
