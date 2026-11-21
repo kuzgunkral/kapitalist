@@ -18598,7 +18598,7 @@ function sohbetYukle(){
           window._gMentionGorulen=window._gMentionGorulen||{};
           if(!window._gMentionGorulen[_key]){
             window._gMentionGorulen[_key]=1;
-            pmBekleyenEkle(m.kullanici_adi,m.mesaj);
+            pmBekleyenEkle(m.kullanici_adi,m.mesaj,_key);
           }
         }
       }
@@ -18815,7 +18815,7 @@ function gOnlineRender(list){
   var h='';
   (list||[]).forEach(function(k){
     var _ben=k===ben;
-    h+='<div onclick="'+(_ben?'':'gDMPopup(&quot;'+k+'&quot;)')+'"'+(_ben?'':' oncontextmenu="event.preventDefault();gOnlineCtx(event,\''+k+'\')" title="Sağ tık: Arkadaş / PM / Engelle"')+' style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;margin-bottom:2px;'+(_ben?'':'cursor:pointer;')+'" onmouseover="this.style.background=\'#0d2a4f\'" onmouseout="this.style.background=\'\'">'
+    h+='<div data-onk="'+k+'"'+(_ben?'':' oncontextmenu="event.preventDefault();gOnlineCtx(event,\''+k+'\')" title="Sağ tık: Arkadaş / PM / Engelle"')+' style="display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;margin-bottom:2px;'+(_ben?'':'cursor:pointer;')+'" onmouseover="this.style.background=\'#0d2a4f\'" onmouseout="this.style.background=\'\'">'
       +'<span style="width:7px;height:7px;border-radius:50%;background:'+(_ben?'#60a5fa':(arkadasMi(k)?'#4ade80':'#10b981'))+';flex-shrink:0"></span>'
       +'<span style="font-size:11px;font-weight:'+(_ben?'800':'600')+';color:'+(_ben?'#60a5fa':(arkadasMi(k)?'#4ade80':'#d8e8f8'))+'">'+k+'</span>'
       +(_ben?'<span style="font-size:9px;color:#4a7090">(sen)</span>':'')
@@ -18825,6 +18825,15 @@ function gOnlineRender(list){
   });
   if(!h)h='<div style="color:#4a7090;font-size:10px;padding:6px 2px">Şu an online kimse yok</div>';
   el.innerHTML=h;
+  // Tiklama handler'lari addEventListener ile — quoted isimlerde HTML attr bozulmasin
+  var _rows=el.querySelectorAll('[data-onk]');
+  for(var _i=0;_i<_rows.length;_i++){
+    (function(_row){
+      var _k=_row.getAttribute('data-onk');
+      if(_k===ben)return;
+      _row.addEventListener('click',function(){gDMPopup(_k);});
+    })(_rows[_i]);
+  }
 }
 // Bekleyen klan davetlerini çek; ekran üstü banner + anasayfa davet kutusunu güncelle
 function klDavetSenk(){
@@ -18882,20 +18891,30 @@ function pmBildirimSenk(){
       var _key=(b.gonderen||'')+'_'+(b.zaman||0);
       if(window._pmBildirimGorulen[_key])return;
       window._pmBildirimGorulen[_key]=1;
-      pmBaloncukGoster(b.gonderen,b.mesaj);
+      pmBaloncukGoster(b.gonderen,b.mesaj,_key);
     });
     _pmGorulenKaydet();
   }).catch(function(){});
 }
 function pmBekleyenSayi(){try{return Object.keys(window._pmBekleyen||{}).length;}catch(e){return 0;}}
-function pmBekleyenEkle(kadi,mesaj){
+function pmBekleyenEkle(kadi,mesaj,anahtar){
   if((pmEngelliListe()||{})[kadi])return;
   if(!window._pmBekleyen)window._pmBekleyen={};
-  window._pmBekleyen[kadi]={mesaj:mesaj||'',zaman:Date.now()};
+  window._pmBekleyen[kadi]={mesaj:mesaj||'',zaman:Date.now(),anahtar:anahtar||''};
   pmBaloncukGuncelle();
 }
 function pmBekleyenTemizle(kadi){
   if(!kadi||!window._pmBekleyen||!window._pmBekleyen[kadi])return;
+  // Baloncuk kapatildiysa (✕ ya da DM acilmasi) kalici olarak "goruldu" isaretle —
+  // F5 sonrasi ayni eski PM tekrar yanip sonmesin
+  var _a=(window._pmBekleyen[kadi]||{}).anahtar;
+  if(_a){
+    try{
+      if(!window._pmBildirimGorulen||window._pmGorulenKullanici!==(window._currentUser||'anon'))_pmGorulenYukle();
+      window._pmBildirimGorulen[_a]=1;
+      _pmGorulenKaydet();
+    }catch(e){}
+  }
   delete window._pmBekleyen[kadi];
   pmBaloncukGuncelle();
 }
@@ -18924,7 +18943,7 @@ function pmBaloncukGuncelle(){
     +'<div style="font-size:9px;color:#4a7090;margin-top:3px">Okumak için tıkla</div>';
   b.onclick=function(){var _k=b.getAttribute('data-kadi');pmBekleyenTemizle(_k);gDMPopup(_k);};
 }
-function pmBaloncukGoster(kadi,mesaj){pmBekleyenEkle(kadi,mesaj);}
+function pmBaloncukGoster(kadi,mesaj,anahtar){pmBekleyenEkle(kadi,mesaj,anahtar);}
 setInterval(pmBildirimSenk,10000);
 setTimeout(pmBildirimSenk,2000);
 function gDMKapat(){
@@ -109282,16 +109301,13 @@ async function klanYardimciAta(isim) {
 }
 function klanLiderYap(isim) {
   if(!isim){log('Üye seçin!','er');return;}
-  var _yrd=false;
-  (window._klanBulutUyeler||[]).forEach(function(u){if(u.kullanici_adi===isim&&u.rol==='yardimci')_yrd=true;});
-  if(!_yrd){log('Önce bu kişiyi asist yapmalısın!','er');return;}
   var popup = document.createElement('div');
   popup.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;';
   popup.innerHTML = '<div style="background:#202a42;border:2px solid #f59e0b;border-radius:14px;padding:28px;max-width:380px;text-align:center">'
     + '<div style="font-size:40px;margin-bottom:10px">👑</div>'
     + '<div style="font-size:16px;font-weight:800;color:#f59e0b;margin-bottom:10px">Liderliği Devret</div>'
     + '<div style="font-size:13px;color:#d8e8f8;margin-bottom:8px"><b style="color:#a78bfa">'+isim+'</b> yeni lider olacak.</div>'
-    + '<div style="font-size:12px;color:#f59e0b;margin-bottom:20px">Sen asist konumuna düşeceksin. Emin misin?</div>'
+    + '<div style="font-size:12px;color:#f59e0b;margin-bottom:20px">Devredilen kişi klana direkt lider olarak geçecek. Emin misin?</div>'
     + '<div style="display:flex;gap:10px;justify-content:center">'
     + '<button onclick="this.closest(\'div[style*=fixed]\').remove();" style="padding:8px 20px;background:#202a42;color:#6080a0;border:1px solid #2e4060;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">İptal</button>'
     + '<button onclick="klanLiderYapOnayla(\''+isim+'\');this.closest(\'div[style*=fixed]\').remove();" style="padding:8px 20px;background:#78350f;color:#f59e0b;border:1px solid #f59e0b;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">👑 Evet, Devret</button>'
@@ -109378,7 +109394,7 @@ async function klanMesajlariYukle() {
       if(!window._klanMentionBildirildi)window._klanMentionBildirildi={};
       if(!window._klanMentionBildirildi[m.id]){
         window._klanMentionBildirildi[m.id]=1;
-        try{ if(typeof pmBekleyenEkle==='function') pmBekleyenEkle('⚔️ '+G.klan.ad,m.mesaj); }catch(e){}
+        try{ if(typeof pmBekleyenEkle==='function') pmBekleyenEkle('⚔️ '+G.klan.ad,m.mesaj,'k_'+m.id); }catch(e){}
       }
     }
     var _clanStil='';
@@ -109635,6 +109651,19 @@ async function klanSupaYukle() {
     var d = await r.json();
     if(d.klan) {
       var _rolOnce=window._klanBulutRol;
+      // Bulutta uyelik var ama local state bos ise (istekle katilma / sifirlama sonrasi) senkronla —
+      // yoksa klan tab'i "Klan Sistemi" bos ekraninda takili kalir
+      try{
+        if(!G.klan.kuruldu||G.klan.ad!==d.klan.ad){
+          G.klan.ad=d.klan.ad;G.klan.kuruldu=true;G.klan.uyeler=G.klan.uyeler||[];
+          G.klan.xp=G.klan.xp||0;G.klan.seviye=G.klan.seviye||1;
+          G.klan.banka=Math.round(d.klan.banka||0);
+          try{localStorage.removeItem('_klanUyeCache');}catch(e){}
+          save();
+          log('⚔️ "'+d.klan.ad+'" klanına üyesin! Klan sekmesi açıldı.','ok');
+        }
+        if(G.klan&&G.klan.kuruldu)G.klan.banka=Math.round(d.klan.banka||0);
+      }catch(_eS){}
       window._klanBulutUyeler = d.klan.uyeler || [];
       window._klanBulutAd = d.klan.ad;
       window._klanBulutRol = d.klan.benim_rolum;
@@ -109780,6 +109809,13 @@ async function klanSohbetBulutYukle() {
     if(G.klan.mesajlar.length!==_onceki)_degisti=true;
     var _mevcut={};
     G.klan.mesajlar.forEach(function(m){_mevcut[m.id]=1;});
+    // Ilk bulut cekimi (F5/acilis): filigran kur — eski klan mesajlari bildirim uretmesin
+    var _ilkCekim=(window._klanSohbetIlkZaman===undefined);
+    if(_ilkCekim){
+      var _mK=0;
+      _cl.forEach(function(m){if((m.zaman||0)>_mK)_mK=m.zaman;});
+      window._klanSohbetIlkZaman=_mK;
+    }
     _cl.forEach(function(m){
       if(!_mevcut[m.id]){
         // Cift mesaj onleme: gonderim aninda lokal eklenen ekoyu bulut kopyasiyla degistir
@@ -109789,11 +109825,14 @@ async function klanSohbetBulutYukle() {
         }
         G.klan.mesajlar.push({id:m.id,oyuncu:m.kullanici_adi,mesaj:m.mesaj,zaman:m.zaman});_degisti=true;
         // Klan sohbetinde adimdan bahsedildiyse (klan tabindayken degilsek) sekme yesil yanip sonsun
+        // — yalnizca ilk cekimden SONRA gelen gercekten yeni mesajlar icin
         try{
+          if(!_ilkCekim&&(m.zaman||0)>(window._klanSohbetIlkZaman||0)){
           var _benAd=(G._oyuncuAdi||window._currentUser||'').toLowerCase();
           if(_benAd&&window._activeTab!=='klan'&&m.kullanici_adi&&m.kullanici_adi.toLowerCase()!==_benAd&&m.mesaj&&m.mesaj.toLowerCase().indexOf(_benAd)>=0){
             if(typeof klanTabBlink==='function')klanTabBlink();
-            if(typeof pmBekleyenEkle==='function'&&G.klan&&G.klan.ad)pmBekleyenEkle('⚔️ '+G.klan.ad,m.mesaj);
+            if(typeof pmBekleyenEkle==='function'&&G.klan&&G.klan.ad)pmBekleyenEkle('⚔️ '+G.klan.ad,m.mesaj,'k_'+m.id);
+          }
           }
         }catch(_e){}
       }
