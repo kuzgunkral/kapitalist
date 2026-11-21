@@ -18566,7 +18566,28 @@ function sohbetYukle(){
       var t=new Date(m.zaman).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"});
       var kadi=window._currentUser||'';
       var renk=m.kullanici_adi===kadi?"#60a5fa":"#10b981";
-      d.innerHTML="<span style='color:"+renk+";font-weight:700'>"+m.kullanici_adi+"</span> <span style='color:#4a7090;font-size:11px'>"+t+"</span> <span style='color:#cbd5e1'>"+m.mesaj+"</span>";
+      // Adimdan bahsedildi mi? (kelime siniri ile; "Ahmet" "Ahmetin" içinde yakalanmasin diye basit kontrol)
+      var _benimAd=kadi||'';
+      var _bahsedildi=_benimAd&&m.kullanici_adi!==_benimAd&&m.mesaj.indexOf(_benimAd)>=0;
+      if(_bahsedildi){
+        d.style.background="rgba(245,158,11,0.12)";
+        d.style.borderLeft="3px solid #f59e0b";
+        d.style.paddingLeft="5px";
+      }
+      d.innerHTML="<span style='color:"+renk+";font-weight:700'>"+m.kullanici_adi+"</span> <span style='color:#4a7090;font-size:11px'>"+t+"</span> <span style='color:#cbd5e1'>"+m.mesaj+"</span>"+(_bahsedildi?" <span style='font-size:9px;color:#f59e0b'>@ sen</span>":"");
+      // Yeni gelen mesajda adimdan bahsedildiyse PM baloncuğuyla bildir
+      if(_bahsedildi){
+        var _mz=m.zaman||Date.now();
+        if(window._gSonGorZaman!==undefined&&_mz>window._gSonGorZaman){
+          var _key='g_'+m.id;
+          window._gMentionGorulen=window._gMentionGorulen||{};
+          if(!window._gMentionGorulen[_key]){
+            window._gMentionGorulen[_key]=1;
+            pmBekleyenEkle(m.kullanici_adi,m.mesaj);
+          }
+        }
+      }
+      if(m.zaman&&(window._gSonGorZaman===undefined||m.zaman>window._gSonGorZaman))window._gSonGorZaman=m.zaman;
       if(_gSeciliMesajlar.indexOf(m.id)>=0)d.style.background="rgba(30,58,95,0.6)";
       d.onclick=function(){window._gHedefKadi=m.kullanici_adi;var i=_gSeciliMesajlar.indexOf(m.id);if(i>=0){_gSeciliMesajlar.splice(i,1);this.style.background="";}else{_gSeciliMesajlar.push(m.id);this.style.background="rgba(30,58,95,0.6)";}if(_gYetki.admin)gMuteListeGetir(gMuteBtnGuncelle);};
       d.oncontextmenu=function(e){e.preventDefault();gSohbetCtx(e,m.kullanici_adi,m.id);};
@@ -18583,6 +18604,41 @@ function sohbetMuteKilitle(){
   var b=document.getElementById("gMuteBtn");if(b){b.textContent="Unmute";b.style.color="#ef4444";b.style.borderColor="#ef4444";}
   var w=document.getElementById("sohbet-inp-wrap");
   if(w){w.innerHTML='<div style="flex:1;padding:7px 10px;background:#1a0f05;border:1px solid #f97316;border-radius:8px;color:#f97316;font-size:12px;text-align:center">🔇 Susturuldunuz — yönetici sizi susturdu, mesaj gönderemezsiniz</div>';}
+}
+// ---- BOT KILIT KALICILIK ----
+// Sunucu save'i (_saveData) borsaAnaBotKilidi ve borsaHisse'yi icermedigi icin
+// F5'te bulut verisi localStorage'i ezince elmasla acilan bot kilitleri geri donuyordu.
+// Cozum: kilitler ayri bir localStorage anahtarina yazilir, yukleme sonrasi geri uygulanir.
+function _botKilitAnahtar(){
+  try{return 'kuz_botKilit_'+(window._currentUser||'anon');}catch(e){return 'kuz_botKilit_anon';}
+}
+function botKilitKaydet(){
+  try{
+    var k=_botKilitAnahtar();
+    if(!window._currentUser)return;
+    if(!G.borsaAnaBotKilidi){
+      var _al={},_sat={};
+      if(G.borsaHisse){Object.keys(G.borsaHisse).forEach(function(kod){
+        if(G.borsaHisse[kod].botUnlocked)_al[kod]=1;
+        if(G.borsaHisse[kod].botSatUnlocked)_sat[kod]=1;
+      });}
+      localStorage.setItem(k,JSON.stringify({ana:1,al:_al,sat:_sat}));
+    } else localStorage.removeItem(k);
+  }catch(e){}
+}
+function botKilitUygula(){
+  try{
+    if(!window._currentUser)return;
+    var raw=localStorage.getItem(_botKilitAnahtar());
+    if(!raw)return;
+    var kl=JSON.parse(raw);
+    if(kl&&kl.ana&&G.borsaAnaBotKilidi!==false){
+      G.borsaAnaBotKilidi=false;
+      if(!G.borsaHisse)G.borsaHisse={};
+      if(kl.al)Object.keys(kl.al).forEach(function(kod){if(!G.borsaHisse[kod])G.borsaHisse[kod]={};G.borsaHisse[kod].botUnlocked=true;});
+      if(kl.sat)Object.keys(kl.sat).forEach(function(kod){if(!G.borsaHisse[kod])G.borsaHisse[kod]={};G.borsaHisse[kod].botSatUnlocked=true;});
+    }
+  }catch(e){}
 }
 function pmEngelliListe(){try{return JSON.parse(localStorage.getItem('_pmEngelliler')||'{}')||{};}catch(e){return {};}}
 function pmEngelliToggle(kadi){
@@ -18605,9 +18661,48 @@ function gOnlineCtx(e,kadi){
   var s='padding:6px 10px;cursor:pointer;font-size:12px;border-radius:4px;';
   var _eng=!!pmEngelliListe()[kadi];
   var h="<div style='"+s+"color:#10b981' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='gDMPopup(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>&#x1F4AC; PM G\u00F6nder: "+kadi+"</div>";
+  h+="<div style='"+s+"color:#a78bfa' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='kullaniciBilgiKarti(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>&#x1F4CB; Bilgi Kart\u0131 (5&#x1F48E;): "+kadi+"</div>";
   h+="<div style='"+s+"color:"+(_eng?'#10b981':'#ef4444')+"' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='pmEngelliToggle(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>"+(_eng?'&#x2705; Engeli A\u00E7: ':'&#x1F6AB; Engelle: ')+kadi+"</div>";
   m.innerHTML=h;document.body.appendChild(m);
   setTimeout(function(){var _c=function(ev){if(!m.contains(ev.target)){m.remove();document.removeEventListener('click',_c);}};document.addEventListener('click',_c);},0);
+}
+// Kullanici bilgi karti (5 elmas): servet, elmas, gun, kayit tarihi, klan
+function kullaniciBilgiKarti(kadi){
+  if(!kadi)return;
+  if(kadi===(window._currentUser||'')){log('Kendi kartına gerek yok, profiline bak 🙂','sy');return;}
+  if((G.elmas||0)<5){log('💎 Bilgi kartı için 5 elmas gerekiyor (mevcut: '+(G.elmas||0)+')','er');return;}
+  elmasOnayla(5,'İstihbarat: '+kadi+' bilgi kartı',function(){
+    var tok=localStorage.getItem('cf_token')||'';
+    if(!tok){log('Giriş gerekli!','er');return;}
+    fetch(CF_API+'/kullanici/bilgi?kadi='+encodeURIComponent(kadi),{headers:{'Authorization':'Bearer '+tok}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.hata){log('⛔ '+d.hata,'er');return;}
+      var _servet=typeof fmt==='function'?fmt(d.servet||0):(d.servet||0);
+      var _elmas=typeof fmtElmas==='function'?fmtElmas(d.elmas||0):(d.elmas||0);
+      var _kayit=d.kayit?new Date(d.kayit).toLocaleDateString('tr-TR'):'-';
+      var _son=d.son_aktif?Math.floor((Date.now()-d.son_aktif)/60000):null;
+      var _sonTxt=_son===null?'-':(_son<1?'şimdi':(_son<60?_son+' dk önce':(_son<1440?Math.floor(_son/60)+' sa önce':Math.floor(_son/1440)+' gün önce')));
+      var p=document.createElement('div');p.id='kullaniciBilgiPopup';
+      p.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99998;display:flex;align-items:center;justify-content:center';
+      p.innerHTML='<div style="background:#0a1628;border:1px solid #a78bfa;border-radius:12px;padding:18px 22px;min-width:260px;max-width:320px;width:92%;box-sizing:border-box;font-family:inherit">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><span style="font-size:14px;font-weight:900;color:#a78bfa">📋 '+kadi+'</span><span onclick="document.getElementById(\'kullaniciBilgiPopup\').remove()" style="cursor:pointer;color:#6080a0;font-size:14px">✕</span></div>'
+        +'<div style="font-size:12px;color:#d8e8f8;line-height:2">'
+        +'<div>💰 <b style="color:#f59e0b">Servet:</b> '+_servet+' TL</div>'
+        +'<div>💎 <b style="color:#a78bfa">Elmas:</b> '+_elmas+'</div>'
+        +'<div>📅 <b style="color:#10b981">Gün:</b> '+(d.gun||1)+'</div>'
+        +'<div>⚔️ <b style="color:#60a5fa">Klan:</b> '+(d.klan||'Yok')+'</div>'
+        +'<div>🗓️ <b style="color:#6080a0">Kayıt:</b> '+_kayit+'</div>'
+        +'<div>🟢 <b style="color:#10b981">Son aktif:</b> '+_sonTxt+'</div>'
+        +'</div>'
+        +'<div style="margin-top:10px;font-size:10px;color:#4a7090;text-align:center">-5 💎 istihbarat bedeli ödendi</div>'
+        +'</div>';
+      document.body.appendChild(p);
+      p.onclick=function(e){if(e.target===p)p.remove();};
+      // veriyi kaydet (worker da bu save ile istatistikleri günceller)
+      save();
+    }).catch(function(){log('Sunucuya bağlanılamadı!','er');});
+  });
 }
 function gOnlineRender(list){
   window._onlineUyeler=list||[];
@@ -70380,6 +70475,8 @@ function mainTimer() {
 
 function klanTabLvGuncelle(){var _el=document.getElementById('klan-tab-lv');if(_el){if(typeof klanInit==='function')klanInit();if(G.klan&&G.klan.kuruldu){_el.textContent='LV'+(G.klan.seviye||1);}else{_el.textContent='';}}}
 function switchTab(tab, el) {
+  // Klan mention sekme blink'ini temizle (kullanıcı klana girdi -> bildirim okundu)
+  try{ if(typeof klanTabBlinkTemizle==='function') klanTabBlinkTemizle(); }catch(_e){}
   klanTabLvGuncelle();
   if(tab !== 'depo' && window._depoSecAcik && typeof toggleDepoSec==='function'){var _acCat=Object.keys(window._depoSecAcik).filter(function(k){return window._depoSecAcik[k];})[0];if(_acCat)toggleDepoSec(_acCat);}
   if(window._borsaTabTimer && tab !== 'borsa'){ clearInterval(window._borsaTabTimer); window._borsaTabTimer=null; }
@@ -76544,6 +76641,7 @@ function save() {
   if (G.elmas < 0) G.elmas = 0;
 
   var key = window._currentUser ? getSaveKey(window._currentUser) : 'parp_v7';
+  try{ if(typeof botKilitKaydet==='function') botKilitKaydet(); }catch(_e){}
 
 
 
@@ -76851,6 +76949,8 @@ function load() {
     if (G.pdata && G.globalKarSonOran > 0) {
       Object.keys(G.pdata).forEach(function(k){ if(PRODUCTS[k]) G.pdata[k].margin = G.globalKarSonOran; });
     }
+    // Elmasla acilan bot kilitlerini geri yukle (bulut save'de bulunmadiklari icin)
+    try{ if(typeof botKilitUygula==='function') botKilitUygula(); }catch(_e){}
     return true;
   } catch(e) { return false; }
 }
@@ -90062,6 +90162,8 @@ function loadUserGame(username) {
 // sonGonderme sifirlanmiyor - kayittan yuklenecek
 
         if(window._supaUser) startOturumKanal(window._supaUser.id); openGame();
+        // Elmasla acilan bot kilitlerini geri yukle (bulut save eziyorsa)
+        setTimeout(function(){ try{ if(typeof botKilitUygula==='function') botKilitUygula(); if(typeof renderBorsa==='function'&&window._activeTab==='borsa')renderBorsa(); }catch(e){} },1500);
 
 
 
@@ -98021,6 +98123,9 @@ function doReset() {
   G.started = false;
   var key = window._currentUser ? getSaveKey(window._currentUser) : 'parp_v7';
   localStorage.removeItem(key);
+  // Bot kilit kaydini da sil — sifirlama sonrasi botlar tekrar kilitli baslasin
+  try{ localStorage.removeItem('kuz_botKilit_'+(window._currentUser||'anon')); }catch(e){}
+  try{ localStorage.removeItem('kuz_botKilit_anon'); }catch(e){}
   // Buluttaki kaydi da sil - yoksa acilista eski kayit geri yuklenir
   // Cift silme: ilk /sil'den sonra havaalaninda bekleyen /save istekleri biter, ikinci /sil temizler
   var _tok = getCFToken();
@@ -109074,6 +109179,23 @@ async function klanMesajlariYukle() {
     var t=new Date(m.zaman);
     var ts=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0');
     var _isMe=(m.oyuncu===(G._oyuncuAdi||'Ben')||m.oyuncu==='Ben');
+    // Klan adimdan bahsedildi mi? -> mesaj baloncuğu yeşil çerçeve + "gördüm" tıkı
+    var _benAd=G._oyuncuAdi||'Ben';
+    var _bahs=!_isMe&&m.mesaj&&m.mesaj.indexOf(_benAd)>=0;
+    var _goruldu=!_bahs||(window._klanMentionGorulen&&window._klanMentionGorulen[m.id]);
+    if(_bahs&&!_goruldu){
+      if(!window._klanMentionYeni)window._klanMentionYeni={};
+      window._klanMentionYeni[m.id]=1;
+      // Bildirim baloncuğu da göster (bir kez)
+      if(!window._klanMentionBildirildi)window._klanMentionBildirildi={};
+      if(!window._klanMentionBildirildi[m.id]){
+        window._klanMentionBildirildi[m.id]=1;
+        try{ if(typeof pmBekleyenEkle==='function') pmBekleyenEkle('⚔️ '+G.klan.ad,m.mesaj); }catch(e){}
+      }
+    }
+    var _clanStil='';
+    var _bg=_bahs?'#0d2a1a':(_isMe?'#0d2a1a':_mBan?'#1a0505':'#202a42');
+    var _klanCerceve=(_bahs&&!_goruldu)?';border:1px solid #10b981;box-shadow:0 0 8px 2px rgba(16,185,129,0.5)':'';
     var _adClick=_isYon?'onclick="window._klanSeciliUye=\''+m.oyuncu+'\';window._klanSohbetSecili=\''+m.oyuncu+'\';var _sp=document.getElementById(\'klanSeciliUyeAd\');if(_sp){_sp.textContent=\''+m.oyuncu+'\';}var _ab=document.getElementById(\'klanUyeAksiyonBar\');if(_ab){_ab.style.display=\'flex\';}" style="cursor:pointer;text-decoration:underline dotted;"':'';
     h+='<div style="display:flex;gap:4px;align-items:flex-start;margin-bottom:4px;">';
     if(_isYon){
@@ -109087,8 +109209,9 @@ async function klanMesajlariYukle() {
     h+='<span'+_pmTik+(_adTik?' '+_adTik:'')+' style="font-size:12px;font-weight:700;color:'+(_isMe?'#10b981':'#a78bfa')+';white-space:nowrap;'+(!_isMe?'text-decoration:underline dotted;cursor:pointer;':'')+'">'+(_mIkon?'<span style="font-size:10px;margin-right:2px">'+_mIkon+'</span>':'')+m.oyuncu+'</span>';
     var _mBanStyle=_mBan?'text-decoration:line-through;opacity:0.6;border-color:#991b1b;':'';
     var _mDuzenlendi=m.duzenlendi?'<span style="font-size:9px;color:#6080a0;font-style:italic"> (düzenlendi)</span>':'';
+    var _mentionTik=(_bahs&&!_goruldu)?' onclick="klanMentionGordum(\''+m.id+'\')" title="Gördüm olarak işaretle (yeşil sönmesi)" style="cursor:pointer"':'';
     h+='<div style="position:relative;display:inline-block;max-width:80%" class="klan-mesaj-wrap" data-id="'+m.id+'">';
-    h+='<span style="font-size:11px;background:'+(_isMe?'#0d2a1a':_mBan?'#1a0505':'#202a42')+';border:1px solid '+(_isMe?'#10b981':_mBan?'#991b1b':'#2e4060')+';border-radius:0 10px 10px 10px;padding:5px 10px;color:'+(_mBan?'#fca5a5':'#d8e8f8')+';display:block;word-break:break-word;'+_mBanStyle+'">'+m.mesaj+_mDuzenlendi+'</span>';
+    h+='<span'+_mentionTik+' style="font-size:11px;'+_clanStil+'background:'+_bg+';border:1px solid '+(_isMe?'#10b981':_mBan?'#991b1b':'#2e4060')+_klanCerceve+';border-radius:0 10px 10px 10px;padding:5px 10px;color:'+(_mBan?'#fca5a5':'#d8e8f8')+';display:block;word-break:break-word;'+_mBanStyle+'">'+m.mesaj+_mDuzenlendi+'</span>';
     if(_isMe && !_mBan){
       h+='<span onclick="klanMesajDuzenle(\''+m.id+'\',\''+m.mesaj.replace(/'/g,"\\'").replace(/"/g,"&quot;")+'\');" style="position:absolute;top:2px;right:2px;font-size:10px;cursor:pointer;opacity:0;transition:opacity 0.2s;background:#d8e8f8;border-radius:3px;padding:1px 3px" class="klan-mesaj-kalem" title="Düzenle">✏️</span>';
     }
@@ -109099,6 +109222,43 @@ async function klanMesajlariYukle() {
   if(!h)h='<div style="font-size:11px;color:#6080a0;text-align:center;padding:8px">Henüz mesaj yok.</div>';
   el.innerHTML=h;
   el.scrollTop=el.scrollHeight;
+}
+// Klan sohbetinde adin geçtiği yeşil çerçeveli mesaja tıklayınca "gördüm" -> yanıp sönme kapanır
+function klanMentionGordum(id){
+  if(!window._klanMentionGorulen)window._klanMentionGorulen={};
+  window._klanMentionGorulen[id]=1;
+  // Bildirim baloncuğunu da temizle (klan mention'ı)
+  try{ if(typeof pmBekleyenTemizle==='function'&&G.klan&&G.klan.ad)pmBekleyenTemizle('⚔️ '+G.klan.ad); }catch(e){}
+  klanMesajlariYukle();
+}
+// Klan sekme butonu yeşil blink — klan sohbetinde adin geçince sekme yanıp söner
+function klanTabBlink(){
+  var _kb=document.getElementById('klan-tab-lv');
+  var _btn=_kb?_kb.closest('button'):null;
+  if(!_btn)return;
+  if(!document.getElementById('klanTabBlinkStyle')){
+    var s=document.createElement('style');s.id='klanTabBlinkStyle';
+    s.textContent='@keyframes klanTabBlink{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,.2);background:#0a1628}50%{box-shadow:0 0 14px 4px rgba(16,185,129,.6);background:#0d2a1a}}';
+    document.head.appendChild(s);
+  }
+  _btn.style.animation='klanTabBlink 1.2s ease-in-out infinite';
+  _btn.setAttribute('data-klan-blink','1');
+  // Buton metnine yeşil bildirim rozeti
+  if(!document.getElementById('klanTabRozet')){
+    var r=document.createElement('span');r.id='klanTabRozet';
+    r.style.cssText='margin-left:4px;padding:0 6px;background:#10b981;color:#04120c;border-radius:999px;font-size:9px;font-weight:900';
+    r.textContent='@';
+    _btn.appendChild(r);
+  }
+}
+function klanTabBlinkTemizle(){
+  var _kb=document.getElementById('klan-tab-lv');
+  var _btn=_kb?_kb.closest('button'):null;
+  if(_btn&&_btn.getAttribute('data-klan-blink')){
+    _btn.style.animation='';
+    _btn.removeAttribute('data-klan-blink');
+    var r=document.getElementById('klanTabRozet');if(r)r.remove();
+  }
 }
 async function klanSohbetiTemizle() {
   if(!G.klan||!G.klan.ad)return;
@@ -109440,6 +109600,14 @@ async function klanSohbetBulutYukle() {
           if(lm.oyuncu===m.kullanici_adi&&lm.mesaj===m.mesaj&&Math.abs((lm.zaman||0)-m.zaman)<60000){G.klan.mesajlar.splice(i,1);}
         }
         G.klan.mesajlar.push({id:m.id,oyuncu:m.kullanici_adi,mesaj:m.mesaj,zaman:m.zaman});_degisti=true;
+        // Klan sohbetinde adimdan bahsedildiyse (klan tabindayken degilsek) sekme yesil yanip sonsun
+        try{
+          var _benAd=G._oyuncuAdi||'Ben';
+          if(window._activeTab!=='klan'&&m.kullanici_adi!==_benAd&&m.kullanici_adi!=='Ben'&&m.mesaj&&m.mesaj.indexOf(_benAd)>=0){
+            if(typeof klanTabBlink==='function')klanTabBlink();
+            if(typeof pmBekleyenEkle==='function'&&G.klan&&G.klan.ad)pmBekleyenEkle('⚔️ '+G.klan.ad,m.mesaj);
+          }
+        }catch(_e){}
       }
     });
     if(_degisti){

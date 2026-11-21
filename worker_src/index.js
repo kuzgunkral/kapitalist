@@ -101,8 +101,22 @@ async function ekTablolar(env) {
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS klan_banka_log (id TEXT PRIMARY KEY, klan_id TEXT, kullanici_adi TEXT, miktar REAL, tur TEXT, zaman INTEGER)").run();
   try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN klan_ceza_until INTEGER DEFAULT 0").run(); } catch (e) {}
   try { await env.DB.prepare("ALTER TABLE klanlar ADD COLUMN elmas_banka INTEGER DEFAULT 0").run(); } catch (e) {}
+  try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN toplam_servet REAL DEFAULT 0").run(); } catch (e) {}
+  try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN toplam_elmas REAL DEFAULT 0").run(); } catch (e) {}
+  try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN son_gun INTEGER DEFAULT 1").run(); } catch (e) {}
 }
 __name(ekTablolar, "ekTablolar");
+// Kullanici bilgi karti icin istatistik guncelle (/save ile birlikte cagirilir)
+async function kullaniciIstatistikGuncelle(env, kadi, veri) {
+  try {
+    const servis = (veri && (veri.totalEarned != null ? veri.totalEarned : (veri.money || 0))) || 0;
+    const elmas = (veri && veri.elmas) || 0;
+    const gun = (veri && veri.day) || 1;
+    await env.DB.prepare("UPDATE kullanicilar SET toplam_servet=?, toplam_elmas=?, son_gun=? WHERE kullanici_adi=?")
+      .bind(servis, elmas, gun, kadi).run();
+  } catch (e) {}
+}
+__name(kullaniciIstatistikGuncelle, "kullaniciIstatistikGuncelle");
 async function adminMi(env, kadi) {
   if (ADMINLAR.indexOf(kadi) >= 0) return true;
   const m = await modGet(env, kadi);
@@ -217,6 +231,9 @@ var index_default = {
         const { surum, veri } = await request.json();
         if (!veri) return jsonResponse({ hata: "Veri eksik" }, 400);
         const veriJson = JSON.stringify(veri);
+        await ekTablolar(env);
+        const benimKadi = await kadiBul(env, uid);
+        if (benimKadi) await kullaniciIstatistikGuncelle(env, benimKadi, veri);
         const existing = await env.DB.prepare("SELECT id FROM oyun_kayitlari WHERE kullanici_id=? AND surum=?").bind(uid, surum || "v1").first();
         if (existing) {
           await env.DB.prepare("UPDATE oyun_kayitlari SET veri=?,guncellendi=? WHERE kullanici_id=? AND surum=?").bind(veriJson, Date.now(), uid, surum || "v1").run();
@@ -515,6 +532,45 @@ var index_default = {
       }
     }
     /*__EK_ENDPOINTLER4__*/
+    if (path === "/kullanici/bilgi" && request.method === "GET") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const hedef = url.searchParams.get("kadi") || "";
+        if (!hedef) return jsonResponse({ hata: "kadi gerekli" }, 400);
+        const k = await env.DB.prepare(
+          "SELECT kullanici_adi, olusturuldu, toplam_servet, toplam_elmas, son_gun FROM kullanicilar WHERE kullanici_adi=?"
+        ).bind(hedef).first();
+        if (!k) return jsonResponse({ hata: "Kullanici bulunamadi" }, 404);
+        // Klan uyeligi
+        let klanAd = "";
+        try {
+          const ku = await env.DB.prepare(
+            "SELECT kl.ad FROM klan_uyeler u JOIN klanlar kl ON kl.id=u.klan_id WHERE u.kullanici_id=(SELECT id FROM kullanicilar WHERE kullanici_adi=?)"
+          ).bind(hedef).first();
+          if (ku) klanAd = ku.ad;
+        } catch (e) {}
+        // Son aktiflik (online kalp atisi)
+        let sonAktif = 0;
+        try {
+          const oa = await env.DB.prepare("SELECT son_aktif FROM online_durum WHERE kullanici_adi=?").bind(hedef).first();
+          if (oa) sonAktif = oa.son_aktif || 0;
+        } catch (e) {}
+        return jsonResponse({
+          kullanici_adi: k.kullanici_adi,
+          kayit: k.olusturuldu || 0,
+          servet: k.toplam_servet || 0,
+          elmas: k.toplam_elmas || 0,
+          gun: k.son_gun || 1,
+          klan: klanAd,
+          son_aktif: sonAktif
+        });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
     if (path === "/dm/bildirim" && request.method === "GET") {
       try {
         await ekTablolar(env);
