@@ -99,6 +99,7 @@ async function ekTablolar(env) {
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS klan_davetler (id TEXT PRIMARY KEY, klan_id TEXT, alici_kadi TEXT, gonderen TEXT, zaman INTEGER)").run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS online_durum (kullanici_adi TEXT PRIMARY KEY, son_aktif INTEGER)").run();
   await env.DB.prepare("CREATE TABLE IF NOT EXISTS klan_banka_log (id TEXT PRIMARY KEY, klan_id TEXT, kullanici_adi TEXT, miktar REAL, tur TEXT, zaman INTEGER)").run();
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS kullanici_raporlari (id TEXT PRIMARY KEY, hedef TEXT, rapor_eden TEXT, konu TEXT, aciklama TEXT, zaman INTEGER, durum TEXT DEFAULT 'acik')").run();
   try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN klan_ceza_until INTEGER DEFAULT 0").run(); } catch (e) {}
   try { await env.DB.prepare("ALTER TABLE klanlar ADD COLUMN elmas_banka INTEGER DEFAULT 0").run(); } catch (e) {}
   try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN toplam_servet REAL DEFAULT 0").run(); } catch (e) {}
@@ -443,7 +444,76 @@ var index_default = {
         return jsonResponse({ hata: e.message }, 500);
       }
     }
+    if (path === "/panel/kullanici-rapor-ekle" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        if (!benim) return jsonResponse({ hata: "Kullanici bulunamadi" }, 401);
+        const { hedef, konu, aciklama } = await request.json();
+        if (!hedef || typeof hedef !== "string") return jsonResponse({ hata: "Raporlanacak kisi gerekli" }, 400);
+        if (!konu || !String(konu).trim()) return jsonResponse({ hata: "Konu basligi gerekli" }, 400);
+        if (!aciklama || !String(aciklama).trim()) return jsonResponse({ hata: "Sorun aciklamasi gerekli" }, 400);
+        const konuT = String(konu).trim().slice(0, 120);
+        const acikT = String(aciklama).trim().slice(0, 500);
+        if (hedef === benim) return jsonResponse({ hata: "Kendini rapor edemezsin" }, 400);
+        await env.DB.prepare("INSERT INTO kullanici_raporlari (id,hedef,rapor_eden,konu,aciklama,zaman) VALUES (?,?,?,?,?,?)")
+          .bind(crypto.randomUUID(), hedef, benim, konuT, acikT, Date.now()).run();
+        return jsonResponse({ basarili: true, mesaj: "Rapor gonderildi, yoneticiler inceleyecek" });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    if (path === "/panel/kullanici-raporlar" && request.method === "GET") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        if (!(await adminMi(env, benim))) return jsonResponse({ hata: "Yetkiniz yok" }, 403);
+        const { results } = await env.DB.prepare("SELECT id,hedef,rapor_eden,konu,aciklama,zaman,durum FROM kullanici_raporlari ORDER BY zaman DESC LIMIT 200").all();
+        return jsonResponse({ raporlar: results || [] });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
+    if (path === "/panel/kullanici-rapor-sil" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        if (!(await adminMi(env, benim))) return jsonResponse({ hata: "Yetkiniz yok" }, 403);
+        const { id } = await request.json();
+        if (!id) return jsonResponse({ hata: "id gerekli" }, 400);
+        await env.DB.prepare("DELETE FROM kullanici_raporlari WHERE id=?").bind(id).run();
+        return jsonResponse({ basarili: true });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
     /*__EK_ENDPOINTLER__*/
+    if (path === "/dm/temizle" && request.method === "POST") {
+      try {
+        await ekTablolar(env);
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const benim = await kadiBul(env, uid);
+        if (!benim) return jsonResponse({ hata: "Kullanici bulunamadi" }, 401);
+        const { hedef } = await request.json();
+        if (!hedef || typeof hedef !== "string") return jsonResponse({ hata: "hedef gerekli" }, 400);
+        const r = await env.DB.prepare("DELETE FROM dm WHERE (gonderen=? AND alici=?) OR (gonderen=? AND alici=?)")
+          .bind(benim, hedef, hedef, benim).run();
+        return jsonResponse({ basarili: true, silinen: (r.meta && r.meta.changes) || 0 });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
     if (path === "/online-ping" && request.method === "POST") {
       try {
         const token = tokenFromRequest(request);

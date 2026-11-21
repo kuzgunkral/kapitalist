@@ -18765,6 +18765,7 @@ function gOnlineCtx(e,kadi){
   var h="<div style='"+s+"color:"+(_ark?'#f59e0b':'#10b981')+"' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='arkadasToggle(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>"+(_ark?'&#x1F494; Arkada\u015F\u00C7\u0131kar: ':'&#x2B50; Arkada\u015F Ekle: ')+kadi+"</div>";
   h+="<div style='"+s+"color:#10b981' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='gDMPopup(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>&#x1F4AC; PM G\u00F6nder: "+kadi+"</div>";
   h+="<div style='"+s+"color:#a78bfa' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='kullaniciBilgiKarti(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>&#x1F4CB; Bilgi Kart\u0131 (5&#x1F48E;): "+kadi+"</div>";
+  h+="<div style='"+s+"color:#f97316' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='kullaniciRaporPopup(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>&#x1F6A9; Raporla: "+kadi+"</div>";
   h+="<div style='"+s+"color:"+(_eng?'#10b981':'#ef4444')+"' onmouseover='this.style.background=\"#1e3a5f\"' onmouseout='this.style.background=\"\"' onclick='pmEngelliToggle(\""+kadi+"\");document.getElementById(\"gCtxMenu\").remove()'>"+(_eng?'&#x2705; Engeli A\u00E7: ':'&#x1F6AB; Engelle: ')+kadi+"</div>";
   m.innerHTML=h;document.body.appendChild(m);
   setTimeout(function(){var _c=function(ev){if(!m.contains(ev.target)){m.remove();document.removeEventListener('click',_c);}};document.addEventListener('click',_c);},0);
@@ -18951,6 +18952,20 @@ function gDMKapat(){
   var b=document.getElementById('dmMiniBalon');if(b)b.remove();
   window._dmAktifKadi=null;
 }
+// DM popup ✕ ile kapatilirsa konusma gecmisi (iki taraf icin) kalici silinir
+function gDMKapatVeSil(){
+  var k=window._dmAktifKadi;
+  if(!k||k===(window._currentUser||'')){gDMKapat();return;}
+  if(!confirm('"'+'\"'+k+'\"'+' ile olan t\u00FCm konu\u015Fma ge\u00E7mi\u015Fi KALICI olarak silinsin mi? (Bu i\u015Flem geri al\u0131namaz, iki taraf i\u00E7in de silinir)'))return;
+  fetch(CF_API+'/dm/temizle',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({hedef:k})})
+  .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+  .then(function(x){
+    if(x.ok){log('🧹 Konuşma geçmişi silindi ('+((x.d.silinen||0))+' mesaj)','ok');}
+    else{log('⛔ '+(x.d.hata||'Geçmiş silinemedi'),'er');}
+  })
+  .catch(function(){log('Sunucuya bağlanılamadı','er');});
+  gDMKapat();
+}
 function gDMMinimize(){
   var p=document.getElementById('dmPopup');if(!p)return;
   p.style.display='none';
@@ -19057,15 +19072,60 @@ function gMesajRapor(id){
   .catch(function(){log('Sunucuya bağlanılamadı','er');});
 }
 /*__DM_RAPOR_FN__*/
+// Kullanici raporu popup'i: sabit ID (degistirilemez) + konu + 500 karakter aciklama
+function kullaniciRaporPopup(kadi){
+  var old=document.getElementById('raporPopup');if(old)old.remove();
+  var p=document.createElement('div');p.id='raporPopup';p.style.cssText='position:fixed;z-index:99998;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
+  p.innerHTML='<div style="background:#0a1628;border:1px solid #1e3a5f;border-radius:12px;padding:14px;width:400px;max-width:94vw;box-sizing:border-box">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#f97316">&#x1F6A9; Kullan\u0131c\u0131 Raporu</span><span onclick="document.getElementById(\'raporPopup\').remove()" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px">\u2715</span></div>'
+    +'<div style="font-size:10px;color:#4a7090;margin-bottom:3px">RAPORLANAN OYUNCU (de\u011Fi\u015Ftirilemez)</div>'
+    +'<div style="background:#060f1a;border:1px solid #1e3a5f;border-radius:6px;padding:6px 8px;margin-bottom:8px;font-size:12px;font-weight:800;color:#a78bfa">'+kadi+'</div>'
+    +'<div style="font-size:10px;color:#4a7090;margin-bottom:3px">RAPOR EDEN (sabit oyun ID \u2014 de\u011Fi\u015Ftirilemez)</div>'
+    +'<div style="background:#060f1a;border:1px dashed #2e4060;border-radius:6px;padding:6px 8px;margin-bottom:8px;font-size:12px;font-weight:800;color:#60a5fa">'+(window._currentUser||'Bilinmiyor')+' <span style="font-weight:400;color:#4a7090;font-size:10px">(#'+String((window._supaUser&&window._supaUser.id)||'').substring(0,8)+')</span></div>'
+    +'<div style="font-size:10px;color:#4a7090;margin-bottom:3px">KONU BA\u015ELI\u011EI</div>'
+    +'<input id="_raporKonu" type="text" maxlength="120" placeholder="\u00D6rn: Hile \u015F\u00FCphesi / Hakaret / Fiyat manip\u00FClasyonu" style="width:100%;box-sizing:border-box;background:#060f1a;border:1px solid #1e3a5f;border-radius:6px;color:#d8e8f8;font-size:12px;padding:6px 8px;margin-bottom:8px">'
+    +'<div style="font-size:10px;color:#4a7090;margin-bottom:3px">SORUN (max 500 karakter) <span id="_raporSayac" style="color:#6080a0">0/500</span></div>'
+    +'<textarea id="_raporAcik" maxlength="500" rows="5" placeholder="Sorunu anlat..." style="width:100%;box-sizing:border-box;background:#060f1a;border:1px solid #1e3a5f;border-radius:6px;color:#d8e8f8;font-size:12px;padding:6px 8px;resize:vertical"></textarea>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'
+    +'<button onclick="document.getElementById(\'raporPopup\').remove()" style="padding:7px 16px;background:#0a1628;color:#6080a0;border:1px solid #1e3a5f;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">\u0130ptal</button>'
+    +'<button onclick="kullaniciRaporGonder(\''+kadi+'\')" style="padding:7px 16px;background:#f97316;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer">&#x1F6A9; Raporla</button>'
+    +'</div></div>';
+  p.onclick=function(e){if(e.target===p)p.remove();};
+  document.body.appendChild(p);
+  var ta=document.getElementById('_raporAcik');
+  ta.addEventListener('input',function(){var n=ta.value.length;var c=document.getElementById('_raporSayac');if(c){c.textContent=n+'/500';c.style.color=n>450?'#f97316':'#6080a0';}});
+  setTimeout(function(){var k=document.getElementById('_raporKonu');if(k)k.focus();},50);
+}
+function kullaniciRaporGonder(kadi){
+  var konu=(document.getElementById('_raporKonu')||{}).value||'';
+  var acik=(document.getElementById('_raporAcik')||{}).value||'';
+  if(!konu.trim()){log('⛔ Konu başlığı gerekli','er');return;}
+  if(!acik.trim()){log('⛔ Sorun açıklaması gerekli','er');return;}
+  fetch(CF_API+'/panel/kullanici-rapor-ekle',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({hedef:kadi,konu:konu,aciklama:acik})})
+  .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+  .then(function(x){
+    if(!x.ok){log('⛔ '+(x.d.hata||'Rapor edilemedi'),'er');return;}
+    log('🚩 '+(x.d.mesaj||'Rapor gönderildi, yöneticiler inceleyecek'),'ok');
+    var p=document.getElementById('raporPopup');if(p)p.remove();
+  })
+  .catch(function(){log('Sunucuya bağlanılamadı','er');});
+}
 function gRaporlariAc(){
   var old=document.getElementById('raporPopup');if(old)old.remove();
-  fetch(CF_API+'/panel/raporlar',{headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}})
-  .then(function(r){return r.json();})
-  .then(function(d){
+  Promise.all([
+    fetch(CF_API+'/panel/raporlar',{headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}}).then(function(r){return r.json();}),
+    fetch(CF_API+'/panel/kullanici-raporlar',{headers:{'Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')}}).then(function(r){return r.json();})
+  ]).then(function(res){
+    var d=res[0],du=res[1];
+    var _ur=(du&&du.raporlar)||[];
     var p=document.createElement('div');p.id='raporPopup';p.style.cssText='position:fixed;z-index:99998;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
-    var h='<div style="background:#0a1628;border:1px solid #1e3a5f;border-radius:12px;padding:14px;width:420px;max-width:94vw;max-height:80vh;display:flex;flex-direction:column;box-sizing:border-box">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#f59e0b">🚩 Raporlar ('+((d.raporlar||[]).length)+')</span><span onclick="document.getElementById(\'raporPopup\').remove()" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px">✕</span></div>'
-      +'<div style="flex:1;overflow-y:auto">';
+    var h='<div style="background:#0a1628;border:1px solid #1e3a5f;border-radius:12px;padding:14px;width:460px;max-width:94vw;max-height:85vh;display:flex;flex-direction:column;box-sizing:border-box">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#f59e0b">🚩 Raporlar</span><span onclick="document.getElementById(\'raporPopup\').remove()" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px">✕</span></div>'
+      +'<div style="display:flex;gap:6px;margin-bottom:8px">'
+      +'<span id="_rpTabMsj" onclick="gRaporTabDegistir(\'msj\')" style="flex:1;text-align:center;padding:6px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:800;background:#2a1a4a;color:#a78bfa;border:1px solid #7c3aed">💬 Mesaj Raporları ('+((d.raporlar||[]).length)+')</span>'
+      +'<span id="_rpTabUsr" onclick="gRaporTabDegistir(\'usr\')" style="flex:1;text-align:center;padding:6px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:800;background:#060f1a;color:#6080a0;border:1px solid #1e3a5f">🚩 Kullanıcı Raporları ('+_ur.length+')</span>'
+      +'</div>'
+      +'<div id="_rpTabMsjL" style="flex:1;overflow-y:auto">';
     if((d.raporlar||[]).length===0)h+='<div style="color:#4a7090;font-size:11px;padding:20px;text-align:center">Rapor yok</div>';
     (d.raporlar||[]).forEach(function(rp){
       var t=new Date(rp.zaman).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
@@ -19074,10 +19134,32 @@ function gRaporlariAc(){
         +'<div style="display:flex;justify-content:space-between;color:#4a7090;font-size:10px"><span><b style="color:#a78bfa">'+rp.kullanici_adi+'</b> — rapor eden: <b style="color:#60a5fa">'+rp.rapor_eden+'</b> '+t+'</span>'
         +'<span onclick="gRaporSil(\''+rp.id+'\')" style="cursor:pointer;color:#ef4444;font-weight:700">🗑 Sil</span></div></div>';
     });
+    h+='</div>';
+    h+='<div id="_rpTabUsrL" style="flex:1;overflow-y:auto;display:none">';
+    if(_ur.length===0)h+='<div style="color:#4a7090;font-size:11px;padding:20px;text-align:center">Kullanıcı raporu yok</div>';
+    _ur.forEach(function(rp){
+      var t=new Date(rp.zaman).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      h+='<div style="background:#060f1a;border:1px solid #1e3a5f;border-radius:8px;padding:6px 8px;margin-bottom:5px;font-size:11px">'
+        +'<div style="margin-bottom:4px"><b style="color:#f97316">🚩 '+rp.hedef+'</b> <span style="color:#4a7090">— konu:</span> <b style="color:#f59e0b">'+rp.konu+'</b></div>'
+        +'<div style="color:#d8e8f8;background:#0a1628;border-radius:6px;padding:5px 7px;margin-bottom:4px;white-space:pre-wrap;word-break:break-word">'+rp.aciklama+'</div>'
+        +'<div style="display:flex;justify-content:space-between;color:#4a7090;font-size:10px"><span>rapor eden: <b style="color:#60a5fa">'+rp.rapor_eden+'</b> '+t+'</span>'
+        +'<span onclick="gKullaniciRaporSil(\''+rp.id+'\')" style="cursor:pointer;color:#ef4444;font-weight:700">🗑 Sil</span></div></div>';
+    });
     h+='</div></div>';
     p.innerHTML=h;p.onclick=function(e){if(e.target===p)p.remove();};document.body.appendChild(p);
   })
   .catch(function(){log('Raporlar yüklenemedi','er');});
+}
+function gRaporTabDegistir(t){
+  var a=document.getElementById('_rpTabMsj'),b=document.getElementById('_rpTabUsr');
+  var la=document.getElementById('_rpTabMsjL'),lb=document.getElementById('_rpTabUsrL');
+  if(!a||!b||!la||!lb)return;
+  if(t==='msj'){a.style.background='#2a1a4a';a.style.color='#a78bfa';a.style.borderColor='#7c3aed';b.style.background='#060f1a';b.style.color='#6080a0';b.style.borderColor='#1e3a5f';la.style.display='';lb.style.display='none';}
+  else{b.style.background='#2a1a4a';b.style.color='#a78bfa';b.style.borderColor='#7c3aed';a.style.background='#060f1a';a.style.color='#6080a0';a.style.borderColor='#1e3a5f';lb.style.display='';la.style.display='none';}
+}
+function gKullaniciRaporSil(id){
+  fetch(CF_API+'/panel/kullanici-rapor-sil',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({id:id})})
+  .then(function(){gRaporlariAc();}).catch(function(){});
 }
 function gRaporSil(id){
   fetch(CF_API+'/panel/rapor-sil',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('cf_token')||'')},body:JSON.stringify({id:id})})
@@ -19090,7 +19172,7 @@ function gDMPopup(kadi){
   var _yon=false;
   try{_yon=(window._klanBulutRol==='lider'||window._klanBulutRol==='yardimci');}catch(e){}
   p.innerHTML='<div style="background:#0a1628;border:1px solid #1e3a5f;border-radius:12px;padding:14px;width:320px;max-width:92vw;box-sizing:border-box">'
-    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#10b981">💬 '+kadi+'<span id="_dmEngelBtn" onclick="pmEngelliToggle(window._dmAktifKadi)" title="'+(_engMe?'Engeli Aç':'Engelle')+'" style="cursor:pointer;font-size:12px;padding:1px 7px;margin-left:8px;border-radius:4px;color:'+(_engMe?'#10b981':'#ef4444')+'">'+(_engMe?'✅':'🚫')+'</span></span><span style="display:flex;gap:4px;align-items:center"><span onclick="gDMMinimize()" title="Küçült (sağ alta iner)" style="cursor:pointer;color:#6080a0;font-size:14px;padding:2px 8px;border-radius:4px">➖</span><span onclick="gDMKapat()" title="Kapat" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px;border-radius:4px">✕</span></span></div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="font-size:14px;font-weight:900;color:#10b981">💬 '+kadi+'<span id="_dmEngelBtn" onclick="pmEngelliToggle(window._dmAktifKadi)" title="'+(_engMe?'Engeli Aç':'Engelle')+'" style="cursor:pointer;font-size:12px;padding:1px 7px;margin-left:8px;border-radius:4px;color:'+(_engMe?'#10b981':'#ef4444')+'">'+(_engMe?'✅':'🚫')+'</span></span><span style="display:flex;gap:4px;align-items:center"><span onclick="gDMMinimize()" title="Küçült (sağ alta iner)" style="cursor:pointer;color:#6080a0;font-size:14px;padding:2px 8px;border-radius:4px">➖</span><span onclick="gDMKapatVeSil()" title="Kapat + konuşma geçmişini sil" style="cursor:pointer;color:#6080a0;font-size:16px;padding:2px 6px;border-radius:4px">✕</span></span></div>'
     +'<div id="_dmList" style="height:180px;overflow-y:auto;background:#060f1a;border:1px solid #1e3a5f;border-radius:8px;padding:6px;margin-bottom:8px;font-size:11px;line-height:1.6"></div>'
     +(_yon&&kadi!==(window._currentUser||'')?'<button id="_dmDavetBtn" onclick="klDavetEt(\''+kadi+'\')" style="width:100%;margin-bottom:8px;padding:6px;background:#2a1a4a;border:1px solid #7c3aed;border-radius:6px;color:#a78bfa;font-size:11px;font-weight:700;cursor:pointer">⚔️ Klana Davet Et</button>':'')
     +(_gYetki.admin&&kadi!==(window._currentUser||'')?'<button id="_dmKisitBtn" onclick="gAksiyonGonder(\''+kadi+'\',\'mute\',60)" style="width:100%;margin-bottom:8px;padding:6px;background:#1a0f05;border:1px solid #f97316;border-radius:6px;color:#f97316;font-size:11px;font-weight:700;cursor:pointer">🔒 Kısıtla (60dk)</button>':'')
