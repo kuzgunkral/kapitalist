@@ -18892,7 +18892,12 @@ function pmBildirimSenk(){
   // Her sekmede PM düşsün: 3sn'lik evrensel döngü de çağırır; çakışmayı önlemek için min 5sn arayla
   if(window._pmSenkT&&Date.now()-window._pmSenkT<5000)return;
   window._pmSenkT=Date.now();
-  var since=parseInt(localStorage.getItem('_pmSonZaman')||String(Date.now()-300000),10)||0;
+  // F5/acilis sonrasi eski PM'ler tekrar balon yapmasin: gercekten YENI mesajlar
+  // (sayfa acilisindan sonra gelenler) bildirilir. localStorage silinse bile
+  // eski PM ayni sekilde tekrar tekrar dusmez.
+  var since=parseInt(localStorage.getItem('_pmSonZaman')||'0',10)||0;
+  var _acilis=window._pmAcilisZaman||(window._pmAcilisZaman=Date.now());
+  if(since<_acilis)since=_acilis;
   fetch(CF_API+'/dm/bildirim?since='+since,{headers:{'Authorization':'Bearer '+tok}})
   .then(function(r){return r.json();})
   .then(function(d){

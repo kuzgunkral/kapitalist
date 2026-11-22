@@ -197,6 +197,70 @@ def _ts(ms):
     try: return QDateTime.fromMSecsSinceEpoch(int(ms)).toString('dd.MM HH:mm')
     except Exception: return str(ms)
 
+# Granüler yetkiler: kişi başına onay kutusu (moderasyon.admin = hepsi açık)
+YETKI_LISTESI = [
+    ('y_anomaliler', 'Anomali logları'),
+    ('y_kullanicilar', 'Kullanıcı listesi'),
+    ('y_bilgi', 'Bilgi kartı'),
+    ('y_ban', 'Dondur/Serbest'),
+    ('y_sifirla', 'Kayıt sıfırla'),
+    ('y_geri_al', 'Kayıt geri al'),
+    ('y_edit', 'Para/Elmas edit'),
+    ('y_klan_sil', 'Klan sil'),
+    ('y_yetki', 'Yetki verme'),
+]
+
+class YetkiPanel(QDialog):
+    """Bir oyuncuya granüler yetki atama popup'i (sağ tık → Yetki Paneli)."""
+    def __init__(self, token, kadi, parent=None):
+        super().__init__(parent)
+        self.token = token
+        self.kadi = kadi
+        self.setWindowTitle('🔑 Yetki Paneli: ' + kadi)
+        self.setMinimumWidth(360)
+        self.setStyleSheet(ADMIN_CSS)
+        v = QVBoxLayout(self)
+        v.addWidget(QLabel('🔑 ' + kadi + ' için yetkiler:', objectName='pt'))
+        v.addWidget(QLabel('İşaretlediğin yetkiler bu kişiye tanımlanır; işaretsiz olanlar yasaklanır.', objectName='ps'))
+        self.chk_admin = QCheckBox('👑 Tam Admin — her şey (tüm yetkiler açık)')
+        v.addWidget(self.chk_admin)
+        self.chks = {}
+        for ad, etiket in YETKI_LISTESI:
+            c = QCheckBox(etiket)
+            self.chks[ad] = c
+            v.addWidget(c)
+        self.durum = QLabel('', objectName='ps')
+        v.addWidget(self.durum)
+        sat = QHBoxLayout()
+        k = QPushButton('💾 Kaydet', objectName='ayb')
+        k.clicked.connect(self._kaydet)
+        i = QPushButton('Vazgeç', objectName='ab')
+        i.clicked.connect(self.reject)
+        sat.addWidget(k); sat.addWidget(i); sat.addStretch()
+        v.addLayout(sat)
+        self._yukle()
+
+    def _yukle(self):
+        ok, d = admin_istek(self.token, '/admin/yetkiler')
+        if not ok:
+            self.durum.setText('⛔ ' + d.get('hata', 'Yetkiler okunamadı (yetki verme iznin yok olabilir)')); return
+        adminler = set(str(a.get('kadi', '')) for a in (d.get('adminler', []) or []))
+        satir = next((r for r in (d.get('yetkiler', []) or []) if str(r.get('kadi', '')) == self.kadi), None)
+        if self.kadi in adminler:
+            self.chk_admin.setChecked(True)
+        if satir:
+            for ad, _e in YETKI_LISTESI:
+                self.chks[ad].setChecked(bool(satir.get(ad)))
+
+    def _kaydet(self):
+        govde = {'kadi': self.kadi, 'admin': bool(self.chk_admin.isChecked()),
+                 'yetkiler': {ad: (1 if self.chks[ad].isChecked() else 0) for ad, _e in YETKI_LISTESI}}
+        ok, d = admin_istek(self.token, '/admin/yetkiler', govde)
+        if ok:
+            self.accept()
+        else:
+            self.durum.setText('⛔ ' + d.get('hata', 'Kaydedilemedi'))
+
 class AdminPanel(QDialog):
     """Admin mudahale paneli: anomali loglari + hesap mudahale aksiyonlari."""
     def __init__(self, token, log_cb=None, parent=None):
@@ -210,7 +274,13 @@ class AdminPanel(QDialog):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(8)
         root.addWidget(QLabel('🛡️ Admin Müdahale Paneli', objectName='pt'))
-        root.addWidget(QLabel('Şüpheli hareketler (anomali log) ve hesap müdahale araçları. Log satırına çift tıklayınca oyuncu adı dolar.', objectName='ps'))
+        root.addWidget(QLabel('Listede bir isme çift tıkla → oyuncu alanı dolar. Her tabloda isme sağ tıkla → Bilgi Kartı (ücretsiz) / Yetki Paneli.', objectName='ps'))
+        self.sekmeler = QTabWidget()
+        self._kul_yuklu = False
+        self._ban_yuklu = False
+        self._yet_yuklu = False
+        # --- Sekme 1: Anomaliler ---
+        w1 = QWidget(); v1 = QVBoxLayout(w1); v1.setContentsMargins(2, 6, 2, 2)
         self.tablo = QTableWidget(0, 4)
         self.tablo.setHorizontalHeaderLabels(['Zaman', 'Oyuncu', 'Tür', 'Detay'])
         self.tablo.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
@@ -218,20 +288,92 @@ class AdminPanel(QDialog):
         self.tablo.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tablo.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tablo.verticalHeader().setVisible(False)
-        self.tablo.setFixedHeight(250)
         self.tablo.doubleClicked.connect(self._satir_sec)
-        root.addWidget(self.tablo)
+        self.tablo.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tablo.customContextMenuRequested.connect(lambda pos: self._ctx_menu(self.tablo, pos, 1))
+        v1.addWidget(self.tablo)
         ust = QHBoxLayout()
         by = QPushButton('🔄 Logları Yenile', objectName='ayb')
         by.clicked.connect(self.loglari_yukle)
         ust.addWidget(by)
         ust.addStretch()
-        root.addLayout(ust)
+        v1.addLayout(ust)
+        self.sekmeler.addTab(w1, '⚠️ Anomaliler')
+        # --- Sekme 2: Kullanıcılar (canlı filtreli) ---
+        w2 = QWidget(); v2 = QVBoxLayout(w2); v2.setContentsMargins(2, 6, 2, 2)
+        f2 = QHBoxLayout()
+        f2.addWidget(QLabel('Filtre:', objectName='ps'))
+        self.inp_flt = QLineEdit(placeholderText='yaz: liste anında süzülür (örn. "kuz")')
+        self.inp_flt.textChanged.connect(self._kul_filtre)
+        f2.addWidget(self.inp_flt, 1)
+        ul = QPushButton('🔄 Tümünü Listele', objectName='ab')
+        ul.clicked.connect(self.kullanici_yukle)
+        f2.addWidget(ul)
+        v2.addLayout(f2)
+        self.tab_kul = QTableWidget(0, 4)
+        self.tab_kul.setHorizontalHeaderLabels(['Kullanıcı', 'Kayıt', 'Durum', 'Son Aktif'])
+        self.tab_kul.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tab_kul.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tab_kul.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tab_kul.verticalHeader().setVisible(False)
+        self.tab_kul.doubleClicked.connect(self._satir_sec_kul)
+        self.tab_kul.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tab_kul.customContextMenuRequested.connect(lambda pos: self._ctx_menu(self.tab_kul, pos, 0))
+        v2.addWidget(self.tab_kul)
+        self.sekmeler.addTab(w2, '👥 Kullanıcılar')
+        # --- Sekme 3: Banlılar ---
+        w3 = QWidget(); v3 = QVBoxLayout(w3); v3.setContentsMargins(2, 6, 2, 2)
+        self.tab_ban = QTableWidget(0, 3)
+        self.tab_ban.setHorizontalHeaderLabels(['Kullanıcı', 'Durum', 'Son Güncelleme'])
+        self.tab_ban.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tab_ban.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tab_ban.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tab_ban.verticalHeader().setVisible(False)
+        self.tab_ban.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tab_ban.customContextMenuRequested.connect(lambda pos: self._ctx_menu(self.tab_ban, pos, 0))
+        v3.addWidget(self.tab_ban)
+        u3 = QHBoxLayout()
+        bl = QPushButton('🔄 Banlıları Getir', objectName='arb')
+        bl.clicked.connect(self.banli_yukle)
+        u3.addWidget(bl)
+        u3.addStretch()
+        v3.addLayout(u3)
+        self.sekmeler.addTab(w3, '🚫 Banlılar')
+        # --- Sekme 4: Yetkiler (granüler, kişi başına) ---
+        w4 = QWidget(); v4 = QVBoxLayout(w4); v4.setContentsMargins(2, 6, 2, 2)
+        self.tab_yet = QTableWidget(0, 1 + len(YETKI_LISTESI))
+        self.tab_yet.setHorizontalHeaderLabels(['Kullanıcı'] + [e for _, e in YETKI_LISTESI])
+        self.tab_yet.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.tab_yet.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tab_yet.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tab_yet.verticalHeader().setVisible(False)
+        self.tab_yet.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tab_yet.customContextMenuRequested.connect(lambda pos: self._ctx_menu(self.tab_yet, pos, 0))
+        v4.addWidget(self.tab_yet)
+        u4 = QHBoxLayout()
+        yl = QPushButton('🔑 Yetki Paneli Aç', objectName='ayb')
+        yl.clicked.connect(self.yetki_paneli_ac)
+        yj = QPushButton('🔄 Yetkileri Yenile', objectName='ab')
+        yj.clicked.connect(self.yetki_yukle)
+        u4.addWidget(yl); u4.addWidget(yj); u4.addStretch()
+        v4.addLayout(u4)
+        self.sekmeler.addTab(w4, '🔑 Yetkiler')
+        root.addWidget(self.sekmeler, 1)
+        self.sekmeler.currentChanged.connect(self._sekme_degisti)
         root.addWidget(QLabel('— Hesap Müdahalesi —', objectName='pt'))
         self._ui_ekle(root)
         self.durum = QLabel('', objectName='ps')
         root.addWidget(self.durum)
         self.loglari_yukle()
+
+    def _sekme_degisti(self, ix):
+        w = self.sekmeler.widget(ix)
+        if w is self.sekmeler.widget(1) and not self._kul_yuklu:
+            self.kullanici_yukle()
+        elif w is self.sekmeler.widget(2) and not self._ban_yuklu:
+            self.banli_yukle()
+        elif w is self.sekmeler.widget(3) and not self._yet_yuklu:
+            self.yetki_yukle()
 
     def _ui_ekle(self, root):
         sat1 = QHBoxLayout()
@@ -305,10 +447,137 @@ class AdminPanel(QDialog):
             ok, d = admin_istek(self.token, '/admin/kullanicilar?q=' + urllib.parse.quote(q))
             if ok and d.get('kullanicilar') is not None:
                 liste = d.get('kullanicilar', [])
-                self._oneri_model.setStringList(liste)
-                if liste:
+                adlar = [((x.get('kadi') if isinstance(x, dict) else str(x)) or '') for x in liste]
+                adlar = [a for a in adlar if a]
+                self._oneri_model.setStringList(adlar)
+                if adlar:
                     self._oneri.complete()
         threading.Thread(target=_uygula, daemon=True).start()
+
+    def _satir_sec_kul(self, index):
+        kadi = self.tab_kul.item(index.row(), 0)
+        if kadi: self.inp_kadi.setCurrentText(kadi.text())
+
+    def _kul_filtre(self, t):
+        t = (t or '').strip().lower()
+        for i in range(self.tab_kul.rowCount()):
+            it = self.tab_kul.item(i, 0)
+            kadi = it.text() if it else ''
+            self.tab_kul.setRowHidden(i, bool(t) and t not in kadi.lower())
+
+    def kullanici_yukle(self):
+        ok, d = admin_istek(self.token, '/admin/kullanicilar?tam=1')
+        rows = d.get('kullanicilar', []) if ok else []
+        self.tab_kul.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            durum = QTableWidgetItem('🚫 Donduruldu' if r.get('ban') else '✅ Aktif')
+            if r.get('ban'): durum.setForeground(QColor('#ef4444'))
+            self.tab_kul.setItem(i, 0, QTableWidgetItem(str(r.get('kadi', ''))))
+            self.tab_kul.setItem(i, 1, QTableWidgetItem(_ts(r.get('kayit', 0))))
+            self.tab_kul.setItem(i, 2, durum)
+            self.tab_kul.setItem(i, 3, QTableWidgetItem(_ts(r.get('son_aktif', 0)) if r.get('son_aktif') else '—'))
+        self._kul_yuklu = True
+        self._kul_filtre(self.inp_flt.text())
+        self._durum('✅ %d kullanıcı listelendi' % len(rows) if ok else '⛔ ' + d.get('hata', 'Kullanıcılar alınamadı'))
+
+    def banli_yukle(self):
+        ok, d = admin_istek(self.token, '/admin/banlilar')
+        rows = d.get('banlilar', []) if ok else []
+        self.tab_ban.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            mu = int(r.get('mute_until', 0) or 0)
+            durum = '🚫 Donduruldu' if r.get('ban') else ('🔇 Susturma bitişi: ' + _ts(mu))
+            self.tab_ban.setItem(i, 0, QTableWidgetItem(str(r.get('kadi', ''))))
+            self.tab_ban.setItem(i, 1, QTableWidgetItem(durum))
+            self.tab_ban.setItem(i, 2, QTableWidgetItem(_ts(r.get('guncellendi', 0))))
+        self._ban_yuklu = True
+        self._durum('✅ %d banlı/susturulmuş hesap' % len(rows) if ok else '⛔ ' + d.get('hata', 'Banlılar alınamadı'))
+
+    def yetki_yukle(self):
+        ok, d = admin_istek(self.token, '/admin/yetkiler')
+        rows = d.get('yetkiler', []) if ok else []
+        adminler = set(str(a.get('kadi', '')) for a in (d.get('adminler', []) or [])) if ok else set()
+        self.tab_yet.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            kadi = str(r.get('kadi', ''))
+            self.tab_yet.setItem(i, 0, QTableWidgetItem(('👑 ' if kadi in adminler else '') + kadi))
+            for j, (ad, _etiket) in enumerate(YETKI_LISTESI):
+                it = QTableWidgetItem('✅' if r.get(ad) else '—')
+                it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if r.get(ad): it.setForeground(QColor('#10b981'))
+                self.tab_yet.setItem(i, j + 1, it)
+        self._yet_yuklu = True
+        self._durum('✅ %d kişinin yetkileri listelendi (sağ tık → Yetki Paneli)' % len(rows) if ok else '⛔ ' + d.get('hata', 'Yetkiler alınamadı'))
+
+    def yetki_paneli_ac(self, kadi=None):
+        if not kadi:
+            kadi = self.inp_kadi.currentText().strip()
+        if not kadi:
+            self._durum('⚠️ Önce oyuncu adı girin veya listeden sağ tıklayın'); return
+        dlg = YetkiPanel(self.token, kadi, self)
+        if dlg.exec():
+            self._durum('✅ ' + kadi + ' yetkileri kaydedildi')
+            self.yetki_yukle()
+
+    def _ctx_menu(self, tbl, pos, kadi_kolon):
+        from PyQt6.QtWidgets import QMenu, QApplication
+        it = tbl.itemAt(pos)
+        if not it: return
+        satir = it.row()
+        ki = tbl.item(satir, kadi_kolon)
+        kadi = ki.text().replace('👑 ', '') if ki else ''
+        if not kadi: return
+        m = QMenu(self)
+        m.setStyleSheet('QMenu{background:#0a1628;color:#d8e8f8;border:1px solid #1e3a5f;} QMenu::item:selected{background:#1e3a5f;}')
+        a1 = m.addAction('ℹ️  Bilgi Kartı (ücretsiz): ' + kadi)
+        a2 = m.addAction('🔑  Yetki Paneli: ' + kadi)
+        a3 = m.addAction('🎯  Oyuncu Alanına Doldur')
+        a4 = m.addAction('📋  İsmi Kopyala')
+        sec = m.exec(tbl.viewport().mapToGlobal(pos))
+        if sec is a1: self._bilgi_karti(kadi)
+        elif sec is a2: self.yetki_paneli_ac(kadi)
+        elif sec is a3: self.inp_kadi.setCurrentText(kadi)
+        elif sec is a4: QApplication.clipboard().setText(kadi)
+
+    def _bilgi_karti(self, kadi):
+        if not kadi: return
+        self._durum('ℹ️ ' + kadi + ' bilgisi alınıyor...')
+        ok, d = admin_istek(self.token, '/admin/bilgi?kadi=' + urllib.parse.quote(kadi))
+        if not ok:
+            self._durum('⛔ ' + d.get('hata', 'Bilgi alınamadı')); return
+        b = d.get('bilgi', {}) or {}
+        save = b.get('save') or {}
+        sa = int(b.get('son_aktif', 0) or 0)
+        online = '🟢 Şu an online' if (sa and QDateTime.currentMSecsSinceEpoch() - sa < 120000) else '⚪ Son aktif: ' + (_ts(sa) if sa else '—')
+        durum = '🚫 DONMUŞ' if b.get('ban') else '✅ Serbest'
+        if b.get('admin'): durum += ' | 👑 Admin'
+        satirlar = [
+            '👤 ' + str(b.get('kadi', kadi)),
+            '📧 E-posta: ' + (b.get('email') or '—'),
+            '🗓️ Kayıt: ' + _ts(b.get('kayit', 0)),
+            'Durum: ' + durum,
+            online,
+        ]
+        if save:
+            satirlar += [
+                '',
+                '💾 Son Kayıt: sürüm=%s, güncelleme=%s' % (save.get('surum', '—'), _ts(save.get('guncellendi', 0))),
+                '💰 Para: %s | 💎 Elmas: %s | 📅 Gün: %s' % (save.get('money', '—'), save.get('elmas', '—'), save.get('day', '—')),
+                '🏙️ Şehir: %s | 🏢 İşyeri: %s' % (save.get('city', '—'), save.get('isyeri', '—')),
+            ]
+        else:
+            satirlar += ['', '💾 Oyun kaydı yok (oyuna hiç girmemiş olabilir)']
+        anom = b.get('anomaliler') or []
+        if anom:
+            satirlar += ['', '⚠️ Son anomaliler (%d):' % len(anom)]
+            for a in anom[:10]:
+                satirlar.append('  • [%s] %s — %s' % (_ts(a.get('zaman', 0)), a.get('tur', ''), a.get('detay', '')))
+        mb = QMessageBox(self)
+        mb.setWindowTitle('Bilgi Kartı: ' + str(b.get('kadi', kadi)))
+        mb.setIcon(QMessageBox.Icon.Information)
+        mb.setText('\n'.join(satirlar))
+        mb.exec()
+        self._durum('✅ Bilgi kartı gösterildi: ' + kadi)
 
     def _satir_sec(self, index):
         kadi = self.tablo.item(index.row(), 1)

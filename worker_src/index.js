@@ -1688,7 +1688,7 @@ var index_default = {
         return jsonResponse({ hata: e.message }, 500);
       }
     }
-    // --- Admin mudahale paneli (yalnizca adminler) ---
+    // --- Admin mudahale paneli (adminler + granüler yetkiler) ---
     const adminYetki = async () => {
       const t = tokenFromRequest(request);
       const auid = await tokenDogrula(env, t);
@@ -1696,10 +1696,28 @@ var index_default = {
       if (!(await adminKontrol(env, auid))) return null;
       return auid;
     };
+    // Granüler yetki: moderasyon.admin=tam yetki; yoksa yetkiler tablosundan bayrak bak
+    const yetkiBilgi = async (auid) => {
+      await env.DB.prepare("CREATE TABLE IF NOT EXISTS yetkiler (kullanici_adi TEXT PRIMARY KEY, y_anomaliler INTEGER DEFAULT 0, y_kullanicilar INTEGER DEFAULT 0, y_bilgi INTEGER DEFAULT 0, y_ban INTEGER DEFAULT 0, y_sifirla INTEGER DEFAULT 0, y_geri_al INTEGER DEFAULT 0, y_edit INTEGER DEFAULT 0, y_klan_sil INTEGER DEFAULT 0, y_yetki INTEGER DEFAULT 0, guncellendi INTEGER)").run();
+      const u = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(auid).first();
+      if (!u) return null;
+      const m = await env.DB.prepare("SELECT admin FROM moderasyon WHERE kullanici_adi=?").bind(u.kullanici_adi).first();
+      if (m && m.admin) return { kadi: u.kullanici_adi, admin: true, y: {} };
+      const y = await env.DB.prepare("SELECT * FROM yetkiler WHERE kullanici_adi=?").bind(u.kullanici_adi).first() || {};
+      return { kadi: u.kullanici_adi, admin: false, y };
+    };
+    const izinKontrol = async (auid, izin) => {
+      const b = await yetkiBilgi(auid);
+      if (!b) return null;
+      if (b.admin || b.y[izin]) return b;
+      return null;
+    };
     const adminLog = (auid, kadi, tur, detay) => anomaliLog(env, auid, kadi, tur, detay);
     if (path === "/admin/anomaliler" && request.method === "GET") {
       const auid = await adminYetki();
       if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      const yet = await izinKontrol(auid, "y_anomaliler");
+      if (!yet) return jsonResponse({ hata: "Yetkisiz", izin: "y_anomaliler" }, 403);
       try {
         await env.DB.prepare("CREATE TABLE IF NOT EXISTS anomali_log (id INTEGER PRIMARY KEY AUTOINCREMENT, kullanici_id INTEGER, kadi TEXT, tur TEXT, detay TEXT, zaman INTEGER)").run();
         const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 500);
@@ -1710,6 +1728,8 @@ var index_default = {
     if (path === "/admin/gecmis" && request.method === "GET") {
       const auid = await adminYetki();
       if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      const yet = await izinKontrol(auid, "y_geri_al");
+      if (!yet) return jsonResponse({ hata: "Yetkisiz", izin: "y_geri_al" }, 403);
       try {
         const kadi = url.searchParams.get("kadi") || "";
         const u = await env.DB.prepare("SELECT id FROM kullanicilar WHERE kullanici_adi=?").bind(kadi).first();
@@ -1727,11 +1747,99 @@ var index_default = {
     if (path === "/admin/kullanicilar" && request.method === "GET") {
       const auid = await adminYetki();
       if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      const yet = await izinKontrol(auid, "y_kullanicilar");
+      if (!yet) return jsonResponse({ hata: "Yetkisiz", izin: "y_kullanicilar" }, 403);
       try {
         const q = String(url.searchParams.get("q") || "").trim().slice(0, 40);
+        const tam = url.searchParams.get("tam") === "1";
+        const sec =
+          "SELECT k.kullanici_adi AS kadi, k.olusturuldu AS kayit, COALESCE(m.ban,0) AS ban, COALESCE(o.son_aktif,0) AS son_aktif " +
+          "FROM kullanicilar k LEFT JOIN moderasyon m ON m.kullanici_adi=k.kullanici_adi LEFT JOIN online_durum o ON o.kullanici_adi=k.kullanici_adi";
+        if (tam) {
+          const { results } = await env.DB.prepare(sec + " ORDER BY k.kullanici_adi LIMIT 200").run();
+          return jsonResponse({ basarili: true, kullanicilar: results || [] });
+        }
         if (!q) return jsonResponse({ basarili: true, kullanicilar: [] });
-        const { results } = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE kullanici_adi LIKE ? ORDER BY kullanici_adi LIMIT 10").bind(q + "%").run();
-        return jsonResponse({ basarili: true, kullanicilar: (results || []).map(r => r.kullanici_adi) });
+        const { results } = await env.DB.prepare(sec + " WHERE k.kullanici_adi LIKE ? ORDER BY k.kullanici_adi LIMIT 10").bind(q + "%").run();
+        return jsonResponse({ basarili: true, kullanicilar: results || [] });
+      } catch (e) { return jsonResponse({ hata: e.message }, 500); }
+    }
+    if (path === "/admin/banlilar" && request.method === "GET") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      const yet = await izinKontrol(auid, "y_kullanicilar");
+      if (!yet) return jsonResponse({ hata: "Yetkisiz", izin: "y_kullanicilar" }, 403);
+      try {
+        const { results } = await env.DB.prepare(
+          "SELECT kullanici_adi AS kadi, ban, mute_until, guncellendi FROM moderasyon WHERE ban=1 OR mute_until>? ORDER BY kullanici_adi LIMIT 200"
+        ).bind(Date.now()).run();
+        return jsonResponse({ basarili: true, banlilar: results || [] });
+      } catch (e) { return jsonResponse({ hata: e.message }, 500); }
+    }
+    if (path === "/admin/bilgi" && request.method === "GET") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      const yet = await izinKontrol(auid, "y_bilgi");
+      if (!yet) return jsonResponse({ hata: "Yetkisiz", izin: "y_bilgi" }, 403);
+      try {
+        const kadi = String(url.searchParams.get("kadi") || "").trim().slice(0, 40);
+        if (!kadi) return jsonResponse({ hata: "kadi gerekli" }, 400);
+        const u = await env.DB.prepare("SELECT id,kullanici_adi,email,olusturuldu FROM kullanicilar WHERE kullanici_adi=?").bind(kadi).first();
+        if (!u) return jsonResponse({ hata: "Kullanici bulunamadi" }, 404);
+        const mod = await env.DB.prepare("SELECT ban,mute_until,admin,guncellendi FROM moderasyon WHERE kullanici_adi=?").bind(kadi).first() || {};
+        const on = await env.DB.prepare("SELECT son_aktif FROM online_durum WHERE kullanici_adi=?").bind(kadi).first() || {};
+        const kayit = await env.DB.prepare("SELECT surum,veri,guncellendi FROM oyun_kayitlari WHERE kullanici_id=? ORDER BY guncellendi DESC LIMIT 1").bind(u.id).first();
+        let save = null;
+        if (kayit) {
+          let v = {};
+          try { v = JSON.parse(kayit.veri) || {}; } catch (e) {}
+          save = { surum: kayit.surum, guncellendi: kayit.guncellendi, money: v.money ?? null, elmas: v.elmas ?? null, day: v.day ?? null, city: v.city ?? null, isyeri: v.isyeri ?? null };
+        }
+        const { results: anom } = await env.DB.prepare("SELECT tur,detay,zaman FROM anomali_log WHERE kadi=? ORDER BY id DESC LIMIT 10").bind(kadi).run();
+        return jsonResponse({
+          basarili: true,
+          bilgi: {
+            kadi: u.kullanici_adi, email: u.email, kayit: u.olusturuldu,
+            ban: !!mod.ban, admin: !!mod.admin, mute_until: mod.mute_until || 0,
+            son_aktif: on.son_aktif || 0, save, anomaliler: anom || []
+          }
+        });
+      } catch (e) { return jsonResponse({ hata: e.message }, 500); }
+    }
+    if (path === "/admin/yetkiler" && request.method === "GET") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      const yet = await izinKontrol(auid, "y_yetki");
+      if (!yet) return jsonResponse({ hata: "Yetkisiz", izin: "y_yetki" }, 403);
+      try {
+        await env.DB.prepare("CREATE TABLE IF NOT EXISTS yetkiler (kullanici_adi TEXT PRIMARY KEY, y_anomaliler INTEGER DEFAULT 0, y_kullanicilar INTEGER DEFAULT 0, y_bilgi INTEGER DEFAULT 0, y_ban INTEGER DEFAULT 0, y_sifirla INTEGER DEFAULT 0, y_geri_al INTEGER DEFAULT 0, y_edit INTEGER DEFAULT 0, y_klan_sil INTEGER DEFAULT 0, y_yetki INTEGER DEFAULT 0, guncellendi INTEGER)").run();
+        const { results } = await env.DB.prepare("SELECT kullanici_adi AS kadi, y_anomaliler, y_kullanicilar, y_bilgi, y_ban, y_sifirla, y_geri_al, y_edit, y_klan_sil, y_yetki FROM yetkiler ORDER BY kullanici_adi LIMIT 200").run();
+        const { results: adminler } = await env.DB.prepare("SELECT kullanici_adi AS kadi FROM moderasyon WHERE admin=1").run();
+        return jsonResponse({ basarili: true, yetkiler: results || [], adminler: adminler || [] });
+      } catch (e) { return jsonResponse({ hata: e.message }, 500); }
+    }
+    if (path === "/admin/yetkiler" && request.method === "POST") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      const yet = await izinKontrol(auid, "y_yetki");
+      if (!yet) return jsonResponse({ hata: "Yetkisiz", izin: "y_yetki" }, 403);
+      try {
+        const { kadi, admin, yetkiler } = await request.json();
+        const kadiGuv = String(kadi || "").trim().slice(0, 40);
+        if (!kadiGuv) return jsonResponse({ hata: "kadi gerekli" }, 400);
+        const u = await env.DB.prepare("SELECT id FROM kullanicilar WHERE kullanici_adi=?").bind(kadiGuv).first();
+        if (!u) return jsonResponse({ hata: "Kullanici bulunamadi: " + kadiGuv }, 404);
+        const y = yetkiler || {};
+        const bayrak = (ad) => (y[ad] ? 1 : 0);
+        await env.DB.prepare(
+          "INSERT INTO yetkiler (kullanici_adi,y_anomaliler,y_kullanicilar,y_bilgi,y_ban,y_sifirla,y_geri_al,y_edit,y_klan_sil,y_yetki,guncellendi) VALUES (?,?,?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(kullanici_adi) DO UPDATE SET y_anomaliler=excluded.y_anomaliler, y_kullanicilar=excluded.y_kullanicilar, y_bilgi=excluded.y_bilgi, y_ban=excluded.y_ban, y_sifirla=excluded.y_sifirla, y_geri_al=excluded.y_geri_al, y_edit=excluded.y_edit, y_klan_sil=excluded.y_klan_sil, y_yetki=excluded.y_yetki, guncellendi=excluded.guncellendi"
+        ).bind(kadiGuv, bayrak("y_anomaliler"), bayrak("y_kullanicilar"), bayrak("y_bilgi"), bayrak("y_ban"), bayrak("y_sifirla"), bayrak("y_geri_al"), bayrak("y_edit"), bayrak("y_klan_sil"), bayrak("y_yetki"), Date.now()).run();
+        if (typeof admin === "boolean") {
+          await env.DB.prepare("INSERT INTO moderasyon (kullanici_adi,admin,guncellendi) VALUES (?,?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET admin=excluded.admin, guncellendi=excluded.guncellendi").bind(kadiGuv, admin ? 1 : 0, Date.now()).run();
+        }
+        await adminLog(auid, kadiGuv, "admin_yetki", "Yetkiler guncellendi: " + JSON.stringify(y) + (typeof admin === "boolean" ? " admin=" + (admin ? 1 : 0) : ""));
+        return jsonResponse({ basarili: true, mesaj: kadiGuv + " yetkileri kaydedildi" });
       } catch (e) { return jsonResponse({ hata: e.message }, 500); }
     }
     if (path === "/admin/aksiyon" && request.method === "POST") {
@@ -1739,6 +1847,12 @@ var index_default = {
       if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
       try {
         const { aksiyon, kadi, gecmisId, money, elmas, day, klan } = await request.json();
+        // Granüler yetki: her aksiyon kendi iznini ister
+        const izinMap = { dondur: "y_ban", serbest: "y_ban", sifirla: "y_sifirla", kullanici_sil: "y_sil", geri_al: "y_geri_al", edit: "y_edit", klan_sil: "y_klan_sil" };
+        if (izinMap[aksiyon]) {
+          const yet2 = await izinKontrol(auid, izinMap[aksiyon]);
+          if (!yet2) return jsonResponse({ hata: "Yetkisiz", izin: izinMap[aksiyon] }, 403);
+        }
         const kadiGuv = String(kadi || "").trim().slice(0, 40);
         const u = kadiGuv ? await env.DB.prepare("SELECT id,kullanici_adi FROM kullanicilar WHERE kullanici_adi=?").bind(kadiGuv).first() : null;
         if (["dondur", "serbest", "sifirla", "kullanici_sil", "geri_al", "edit"].indexOf(aksiyon) >= 0 && !u)
