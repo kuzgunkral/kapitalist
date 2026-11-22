@@ -527,10 +527,45 @@ class MainWidget(QWidget):
                 v.page().triggerAction(QWebEnginePage.WebAction.ReloadAndBypassCache)
 
     def admin_panel(self):
+        # 1) Launcher otomatik girisinden token var mi?
         token = getattr(self, 'pending_cf_token', '')
-        if not token:
-            QMessageBox.warning(self, 'Admin', 'Giris yapilmamis. Once oyuna giris yapin (otomatik giris aciksa launcher acilirken yapilir).')
+        if token:
+            self._admin_panel_ac(token); return
+        # 2) Oyun sekmesindeki canli oturumdan token al (localStorage)
+        v = self.smap.get('oyun')
+        if v is not None and hasattr(v, 'page'):
+            def _cb(r):
+                t = r or ''
+                if t:
+                    self.pending_cf_token = t
+                    self._admin_panel_ac(t)
+                else:
+                    self._token_yenile_ve_ac()
+            v.page().runJavaScript("localStorage.getItem('cf_token')||''", _cb)
             return
+        # 3) Beni hatirla bilgisiyle taze giris
+        self._token_yenile_ve_ac()
+
+    def _token_yenile_ve_ac(self):
+        try:
+            d = json.load(open(OTURUM_FILE))
+            if not (d.get('p_enc') and d.get('u')):
+                QMessageBox.warning(self, 'Admin', 'Oturum bilgisi bulunamadi. Launcher\'i acip oyuna giris yapin.')
+                return
+            p = base64.b64decode(d['p_enc'].encode()).decode()
+            payload = json.dumps({'kullanici_adi': d['u'], 'sifre': p}).encode()
+            req = urllib.request.Request(CF_API + '/giris', data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read())
+            if data.get('token'):
+                self.pending_cf_token = data['token']
+                self._admin_panel_ac(data['token'])
+            else:
+                QMessageBox.warning(self, 'Admin', 'Token alinamadi: ' + str(data.get('hata', '')))
+        except Exception as ex:
+            QMessageBox.warning(self, 'Admin', 'Giris tokeni alinamadi: ' + str(ex)[:80])
+
+    def _admin_panel_ac(self, token):
         self._admin_win = AdminPanel(token, log_cb=self.log, parent=self)
         self._admin_win.show()
         self.log('Admin paneli acildi')
