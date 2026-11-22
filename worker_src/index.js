@@ -1776,6 +1776,23 @@ var index_default = {
         return jsonResponse({ basarili: true, banlilar: results || [] });
       } catch (e) { return jsonResponse({ hata: e.message }, 500); }
     }
+    if (path === "/admin/klanlar" && request.method === "GET") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      const yet = await izinKontrol(auid, "y_kullanicilar");
+      if (!yet) return jsonResponse({ hata: "Yetkisiz", izin: "y_kullanicilar" }, 403);
+      try {
+        const { results } = await env.DB.prepare(
+          "SELECT ad, seviye, olusturuldu FROM klanlar ORDER BY ad LIMIT 300"
+        ).run();
+        return jsonResponse({ basarili: true, klanlar: results || [] });
+      } catch (e) {
+        try {
+          const { results } = await env.DB.prepare("SELECT ad FROM klanlar ORDER BY ad LIMIT 300").run();
+          return jsonResponse({ basarili: true, klanlar: results || [] });
+        } catch (e2) { return jsonResponse({ hata: e2.message }, 500); }
+      }
+    }
     if (path === "/admin/bilgi" && request.method === "GET") {
       const auid = await adminYetki();
       if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);

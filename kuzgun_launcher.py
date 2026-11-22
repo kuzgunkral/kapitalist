@@ -261,6 +261,32 @@ class YetkiPanel(QDialog):
         else:
             self.durum.setText('⛔ ' + d.get('hata', 'Kaydedilemedi'))
 
+class ListeCombo(QComboBox):
+    """Yazarak arama + ok ile tam liste: hem dinamik yazım hem dropdown."""
+    def __init__(self, yukle_cb=None, placeholder='', w=170):
+        super().__init__()
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._yukle_cb = yukle_cb
+        self.setFixedWidth(w)
+        if placeholder:
+            self.lineEdit().setPlaceholderText(placeholder)
+
+    def listeKoy(self, adlar):
+        cur = self.lineEdit().text() if self.lineEdit() else ''
+        self.blockSignals(True)
+        self.clear()
+        self.addItems(adlar)
+        self.setCurrentText(cur)
+        self.blockSignals(False)
+
+    def showPopup(self):
+        if self._yukle_cb:
+            try: self._yukle_cb()
+            except Exception: pass
+        super().showPopup()
+
+
 class AdminPanel(QDialog):
     """Admin mudahale paneli: anomali loglari + hesap mudahale aksiyonlari."""
     def __init__(self, token, log_cb=None, parent=None):
@@ -274,7 +300,13 @@ class AdminPanel(QDialog):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(8)
         root.addWidget(QLabel('🛡️ Admin Müdahale Paneli', objectName='pt'))
-        root.addWidget(QLabel('Listede bir isme çift tıkla → oyuncu alanı dolar. Her tabloda isme sağ tıkla → Bilgi Kartı (ücretsiz) / Yetki Paneli.', objectName='ps'))
+        hdr = QHBoxLayout()
+        hdr.addWidget(QLabel('Listede bir isme çift tıkla → oyuncu alanı dolar. Her tabloda isme sağ tıkla → Bilgi Kartı (ücretsiz) / Yetki Paneli.', objectName='ps'))
+        hdr.addStretch()
+        yr = QPushButton('🔄 Yenile', objectName='ab')
+        yr.clicked.connect(self._herseyi_yenile)
+        hdr.addWidget(yr)
+        root.addLayout(hdr)
         self.sekmeler = QTabWidget()
         self._kul_yuklu = False
         self._ban_yuklu = False
@@ -375,14 +407,20 @@ class AdminPanel(QDialog):
         elif w is self.sekmeler.widget(3) and not self._yet_yuklu:
             self.yetki_yukle()
 
+    def _herseyi_yenile(self):
+        """Sildikler vs. anında düşsün: aktif sekmeyi tazele + listeleri sıfırla."""
+        self._kul_yuklu = self._ban_yuklu = self._yet_yuklu = False
+        ix = self.sekmeler.currentIndex()
+        w = self.sekmeler.widget(ix)
+        if w is self.sekmeler.widget(1): self.kullanici_yukle()
+        elif w is self.sekmeler.widget(2): self.banli_yukle()
+        elif w is self.sekmeler.widget(3): self.yetki_yukle()
+        else: self.loglari_yukle()
+
     def _ui_ekle(self, root):
         sat1 = QHBoxLayout()
         sat1.addWidget(QLabel('Oyuncu:', objectName='ps'))
-        self.inp_kadi = QComboBox()
-        self.inp_kadi.setEditable(True)
-        self.inp_kadi.setFixedWidth(160)
-        self.inp_kadi.lineEdit().setPlaceholderText('kullanıcı adı')
-        self.inp_kadi.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.inp_kadi = ListeCombo(yukle_cb=self._kadi_listesi_yukle, placeholder='kullanıcı adı')
         self._oneri_model = QStringListModel()
         self._oneri = QCompleter(self._oneri_model, self)
         self._oneri.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -404,8 +442,13 @@ class AdminPanel(QDialog):
         root.addLayout(sat1)
         sat2 = QHBoxLayout()
         sat2.addWidget(QLabel('Klan:', objectName='ps'))
-        self.inp_klan = QLineEdit(placeholderText='klan adı')
-        self.inp_klan.setFixedWidth(160)
+        self.inp_klan = ListeCombo(yukle_cb=self._klan_listesi_yukle, placeholder='klan adı')
+        self._klan_model = QStringListModel()
+        self._klan_oneri = QCompleter(self._klan_model, self)
+        self._klan_oneri.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._klan_oneri.setFilterMode(Qt.MatchFlag.MatchContains)
+        self._klan_oneri.activated.connect(lambda t: self.inp_klan.setCurrentText(t))
+        self.inp_klan.lineEdit().setCompleter(self._klan_oneri)
         sat2.addWidget(self.inp_klan)
         b5 = QPushButton('🏳️ Klanı Sil', objectName='arb'); b5.clicked.connect(self.klan_sil)
         sat2.addWidget(b5)
@@ -452,6 +495,31 @@ class AdminPanel(QDialog):
                 self._oneri_model.setStringList(adlar)
                 if adlar:
                     self._oneri.complete()
+        threading.Thread(target=_uygula, daemon=True).start()
+
+    def _kadi_listesi_yukle(self):
+        """Oka basilinca tam kullanici listesi dropdown'a dolsun."""
+        def _uygula():
+            ok, d = admin_istek(self.token, '/admin/kullanicilar?tam=1')
+            if ok:
+                rows = d.get('kullanicilar', [])
+                adlar = sorted({(r.get('kadi') or '') for r in rows} - {''})
+                if adlar:
+                    self.inp_kadi.listeKoy(adlar)
+        threading.Thread(target=_uygula, daemon=True).start()
+
+    def _klan_listesi_yukle(self):
+        """Oka basilinca klan listesi dropdown'a dolsun."""
+        def _uygula():
+            ok, d = admin_istek(self.token, '/admin/klanlar')
+            if ok:
+                rows = d.get('klanlar', [])
+                adlar = sorted({((r.get('ad') if isinstance(r, dict) else str(r)) or '') for r in rows} - {''})
+                if adlar:
+                    self.inp_klan.listeKoy(adlar)
+                    self._klan_model.setStringList(adlar)
+                else:
+                    self.durum.setText('Klan listesi boş.')
         threading.Thread(target=_uygula, daemon=True).start()
 
     def _satir_sec_kul(self, index):
@@ -613,7 +681,7 @@ class AdminPanel(QDialog):
         self.loglari_yukle()
 
     def klan_sil(self):
-        kl = self.inp_klan.text().strip()
+        kl = self.inp_klan.currentText().strip()
         if not kl: self._durum('⚠️ Klan adı girin'); return
         if QMessageBox.question(self, 'Onay', 'Klan "%s" ve tüm üyelikleri silinsin mi?' % kl) != QMessageBox.StandardButton.Yes: return
         ok, d = admin_istek(self.token, '/admin/aksiyon', {'aksiyon': 'klan_sil', 'klan': kl})
