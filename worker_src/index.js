@@ -335,6 +335,15 @@ var index_default = {
         }
         const { surum, veri } = await request.json();
         if (!veri) return jsonResponse({ hata: "Veri eksik" }, 400);
+        // Sifirlama muhuru: yonetici sifirladiysa bayat kayit cloud'a yazilamaz (dirilme engeli)
+        try {
+          const benimKadi0 = await kadiBul(env, uid);
+          if (benimKadi0) {
+            const mu0 = await env.DB.prepare("SELECT zaman FROM kayit_sifirlama WHERE kullanici_adi=?").bind(benimKadi0).first();
+            if (mu0 && mu0.zaman && !(Number(veri._sonSaveZamani) > mu0.zaman))
+              return jsonResponse({ hata: "sifirlandi", sifirlandi: mu0.zaman }, 409);
+          }
+        } catch (e) {}
         const veriJson = JSON.stringify(veri);
         // Boyut limiti: devasa kayit ile DB sismesini engelle
         if (veriJson.length > 500000) return jsonResponse({ hata: "Kayit cok buyuk" }, 413);
@@ -413,6 +422,8 @@ var index_default = {
         } else {
           await env.DB.prepare("INSERT INTO oyun_kayitlari (kullanici_id,surum,veri,olusturuldu,guncellendi) VALUES (?,?,?,?,?)").bind(uid, surumKey, veriJson, Date.now(), Date.now()).run();
         }
+        // Kayit basariyla yazildi: sifirlama muhurunu kaldir
+        try { await env.DB.prepare("DELETE FROM kayit_sifirlama WHERE kullanici_adi=?").bind(benimKadi).run(); } catch (e) {}
         return jsonResponse({ basarili: true });
       } catch (e) {
         return jsonResponse({ hata: "Kayit hatasi: " + e.message }, 500);
@@ -425,7 +436,18 @@ var index_default = {
         if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
         const surum = url.searchParams.get("surum") || "v1";
         const row = await env.DB.prepare("SELECT veri FROM oyun_kayitlari WHERE kullanici_id=? AND surum=?").bind(uid, surum).first();
-        if (!row) return jsonResponse({ veri: null });
+        if (!row) {
+          // Sifirlama muhuru: yonetici kaydi sifirladiysa istemciye bildir (yerel dirilme engellenir)
+          let sifirlandi = 0;
+          try {
+            const benimKadi2 = await kadiBul(env, uid);
+            if (benimKadi2) {
+              const mu = await env.DB.prepare("SELECT zaman FROM kayit_sifirlama WHERE kullanici_adi=?").bind(benimKadi2).first();
+              if (mu && mu.zaman) sifirlandi = mu.zaman;
+            }
+          } catch (e) {}
+          return jsonResponse({ veri: null, sifirlandi });
+        }
         return jsonResponse({ veri: JSON.parse(row.veri) });
       } catch (e) {
         return jsonResponse({ hata: "Yukleme hatasi: " + e.message }, 500);
@@ -478,6 +500,7 @@ var index_default = {
         let kapali = 0;
         let davetler = [];
         let benimMute = 0;
+        let benimBan = 0;
         const token = tokenFromRequest(request);
         const uid = await tokenDogrula(env, token);
         if (uid) {
@@ -495,10 +518,12 @@ var index_default = {
               await modTabloOlustur(env);
               const md = await env.DB.prepare("SELECT mute_until FROM moderasyon WHERE kullanici_adi=?").bind(benim).first();
               if (md && md.mute_until && md.mute_until > Date.now()) benimMute = md.mute_until;
+              const mb = await modGet(env, benim);
+              if (mb && mb.ban === 1) benimBan = 1;
             } catch (e) {}
           }
         }
-        return jsonResponse({ mesajlar: results || [], online, kapali, davetler, benim_mute: benimMute || 0 });
+        return jsonResponse({ mesajlar: results || [], online, kapali, davetler, benim_mute: benimMute || 0, ban: benimBan });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -988,6 +1013,9 @@ var index_default = {
           const hedefUid = await env.DB.prepare("SELECT id FROM kullanicilar WHERE kullanici_adi=?").bind(hedef).first();
           if (hedefUid) {
             await env.DB.prepare("DELETE FROM oyun_kayitlari WHERE kullanici_id=?").bind(hedefUid.id).run();
+            // Sifirlama muhuru: yerel dirilme engeli
+            await env.DB.prepare("CREATE TABLE IF NOT EXISTS kayit_sifirlama (kullanici_adi TEXT PRIMARY KEY, zaman INTEGER)").run();
+            await env.DB.prepare("INSERT INTO kayit_sifirlama (kullanici_adi,zaman) VALUES (?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET zaman=excluded.zaman").bind(hedef, Date.now()).run();
             mesaj = hedef + " bulut kaydi silindi";
           } else mesaj = "Hedef bulunamadi";
         } else {
@@ -1893,6 +1921,9 @@ var index_default = {
         }
         if (aksiyon === "sifirla") {
           await env.DB.prepare("DELETE FROM oyun_kayitlari WHERE kullanici_id=?").bind(u.id).run();
+          // Sifirlama muhuru: istemcinin yerel bayat kaydi cloud'u diriltemesin
+          await env.DB.prepare("CREATE TABLE IF NOT EXISTS kayit_sifirlama (kullanici_adi TEXT PRIMARY KEY, zaman INTEGER)").run();
+          await env.DB.prepare("INSERT INTO kayit_sifirlama (kullanici_adi,zaman) VALUES (?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET zaman=excluded.zaman").bind(kadiGuv, Date.now()).run();
           await adminLog(auid, kadiGuv, "admin_sifirladi", "Oyun kaydi sifirlandi");
           return jsonResponse({ basarili: true, mesaj: kadiGuv + " oyun kaydi sifirlandi" });
         }
@@ -1905,6 +1936,9 @@ var index_default = {
           await env.DB.prepare("DELETE FROM anomali_log WHERE kadi=?").bind(kadiGuv).run();
           await env.DB.prepare("DELETE FROM save_gecmis WHERE kullanici_id=?").bind(u.id).run();
           await env.DB.prepare("DELETE FROM moderasyon WHERE kullanici_adi=?").bind(kadiGuv).run();
+          // Sifirlama muhuru: ayni isimle tekrar kayit olsa bile eski yerel kayit dirilmesin
+          await env.DB.prepare("CREATE TABLE IF NOT EXISTS kayit_sifirlama (kullanici_adi TEXT PRIMARY KEY, zaman INTEGER)").run();
+          await env.DB.prepare("INSERT INTO kayit_sifirlama (kullanici_adi,zaman) VALUES (?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET zaman=excluded.zaman").bind(kadiGuv, Date.now()).run();
           await env.DB.prepare("DELETE FROM kullanicilar WHERE id=?").bind(u.id).run();
           await adminLog(auid, kadiGuv, "admin_sildi", "Kullanici tamamen silindi");
           return jsonResponse({ basarili: true, mesaj: kadiGuv + " silindi" });

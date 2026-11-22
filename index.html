@@ -338,7 +338,7 @@ async function supaYukle(kullaniciAdi) {
   });
   if(!r.ok) return null;
   var d = await r.json();
-  return d.veri || null;
+  return { veri: d.veri || null, sifirlandi: d.sifirlandi || 0 };
 }
 
 // ---- OYUN SIL ----
@@ -18600,7 +18600,8 @@ function sohbetYukle(){
       el.appendChild(d);
     });
     if(atBottom)el.scrollTop=el.scrollHeight;
-    gOnlineRender(data.online||[]);
+    if(data.ban===1){ try{ localStorage.removeItem('cf_token'); localStorage.removeItem('cf_user'); localStorage.removeItem('cf_kullanici'); }catch(_e){} window._cfToken=null; window._currentUser=null; window._supaUser=null; alert('Hesabiniz yonetici tarafindan dondurulmus. Oyundan cikariliyorsunuz.'); location.reload(); return; }
+gOnlineRender(data.online||[]);
     gDavetRender(data.davetler||[]);
     // Susturulma durumu anlık uygulanır (sunucudan) — F5 gerekmez
     try{
@@ -88774,7 +88775,19 @@ function loadUserGame(username) {
 // Supabase'den yükle (öncelikli) — sadece ilk yüklemede, döngüye girmesin
   if(window._supaUser && !window._supaYuklendi) {
     window._supaYuklendi = true;
-    supaYukle(username).then(function(supaVeri) {
+    supaYukle(username).then(function(_svr) {
+      var supaVeri = (_svr && _svr.veri) ? _svr.veri : null;
+      var _sifirT = (_svr && _svr.sifirlandi) ? _svr.sifirlandi : 0;
+      if (_sifirT) {
+        // Yonetici kaydi sifirladi/sildi: yerel kaydi da imha et — eski kayit dirilmesin
+        try { localStorage.removeItem(key); } catch(_e){ }
+        try { localStorage.removeItem(getSaveKey(username)); } catch(_e){ }
+        if (window._gameOpen) { location.reload(); return; }
+        window._gameOpen = false;
+        var lw2 = document.getElementById('loginWrap'); if(lw2) lw2.style.display = 'none';
+        var sw2 = document.getElementById('setupWrap'); if(sw2) sw2.style.display = 'flex';
+        return;
+      }
       if(supaVeri && Object.keys(supaVeri).length > 0) {
         var key2 = getSaveKey(username);
         // YENILIK KAZANIR: F5 anindaki beforeunload fetch'i dusersse bulut bayat
