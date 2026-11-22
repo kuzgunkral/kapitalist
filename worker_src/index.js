@@ -2,13 +2,42 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
 // src/index.js
-async function hashSifre(sifre, salt) {
+// --- SIFRE HASHING ---
+// Yeni: PBKDF2-SHA256, 100.000 iterasyon (hash oneki: "pbkdf2$")
+// Eski kayitlar (duz SHA-256) giriste otomatik olarak PBKDF2'ye yukseltilir.
+async function pbkdf2Hash(sifre, salt) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(sifre), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: encoder.encode(salt), iterations: 100000, hash: "SHA-256" },
+    key, 256
+  );
+  return Array.from(new Uint8Array(bits)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+__name(pbkdf2Hash, "pbkdf2Hash");
+async function hashSifreEski(sifre, salt) {
   const encoder = new TextEncoder();
   const data = encoder.encode(sifre + salt);
   const hash = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+__name(hashSifreEski, "hashSifreEski");
+async function hashSifre(sifre, salt) {
+  return "pbkdf2$" + await pbkdf2Hash(sifre, salt);
+}
 __name(hashSifre, "hashSifre");
+async function sifreDogrula(sifre, salt, kayitliHash) {
+  if (kayitliHash && kayitliHash.indexOf("pbkdf2$") === 0) {
+    return ("pbkdf2$" + await pbkdf2Hash(sifre, salt)) === kayitliHash;
+  }
+  return (await hashSifreEski(sifre, salt)) === kayitliHash;
+}
+__name(sifreDogrula, "sifreDogrula");
+// Kullanici tarafindan girilen metinlerde XSS vektorlerini temizle
+function metniTemizle(s) {
+  return String(s).replace(/[<>`]/g, "").replace(/javascript:/gi, "");
+}
+__name(metniTemizle, "metniTemizle");
 function saltUret() {
   const arr = new Uint8Array(16);
   crypto.getRandomValues(arr);
@@ -25,12 +54,15 @@ async function tokenDogrula(env, token) {
   if (!token) return null;
   const now = Date.now();
   const row = await env.DB.prepare(
-    "SELECT kullanici_id FROM oturumlar WHERE token=? AND son_kullanim>?"
+    "SELECT kullanici_id, son_kullanim FROM oturumlar WHERE token=? AND son_kullanim>?"
   ).bind(token, now).first();
   if (!row) return null;
-  await env.DB.prepare(
-    "UPDATE oturumlar SET son_kullanim=? WHERE token=?"
-  ).bind(now + 7 * 24 * 60 * 60 * 1e3, token).run();
+  // Sonuc kayan 7 gunluk oturum: son_kullanim sadece 1 gunden eskiyse guncelle (D1 yazim maliyetini dusurur)
+  if (now - row.son_kullanim > 86400000) {
+    await env.DB.prepare(
+      "UPDATE oturumlar SET son_kullanim=? WHERE token=?"
+    ).bind(now + 7 * 24 * 60 * 60 * 1e3, token).run();
+  }
   return row.kullanici_id;
 }
 __name(tokenDogrula, "tokenDogrula");
@@ -107,6 +139,7 @@ async function ekTablolar(env) {
   try { await env.DB.prepare("ALTER TABLE kullanicilar ADD COLUMN son_gun INTEGER DEFAULT 1").run(); } catch (e) {}
   try { await env.DB.prepare("ALTER TABLE dm ADD COLUMN sil_g INTEGER DEFAULT 0").run(); } catch (e) {}
   try { await env.DB.prepare("ALTER TABLE dm ADD COLUMN sil_a INTEGER DEFAULT 0").run(); } catch (e) {}
+  try { await env.DB.prepare("ALTER TABLE klanlar ADD COLUMN sohbet_kapali INTEGER DEFAULT 0").run(); } catch (e) {}
 }
 __name(ekTablolar, "ekTablolar");
 // Kullanici bilgi karti icin istatistik guncelle (/save ile birlikte cagirilir)
@@ -120,6 +153,71 @@ async function kullaniciIstatistikGuncelle(env, kadi, veri) {
   } catch (e) {}
 }
 __name(kullaniciIstatistikGuncelle, "kullaniciIstatistikGuncelle");
+// --- Asama 1: hile korumasi logu ---
+// Supheli /save denemelerini anomali_log tablosuna yazar. Log hatasi akisi bozmaz.
+async function anomaliLog(env, uid, kadi, tur, detay) {
+  try {
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS anomali_log (id INTEGER PRIMARY KEY AUTOINCREMENT, kullanici_id INTEGER, kadi TEXT, tur TEXT, detay TEXT, zaman INTEGER)").run();
+    await env.DB.prepare("INSERT INTO anomali_log (kullanici_id,kadi,tur,detay,zaman) VALUES (?,?,?,?,?)")
+      .bind(uid, kadi || "", tur, String(detay).slice(0, 500), Date.now()).run();
+  } catch (e) {}
+}
+__name(anomaliLog, "anomaliLog");
+// Brevo (Sendinblue) ile karsilama maili gonder. Hata olursa kayit islemini bozmaz.
+// Brevo (Sendinblue) ile karsilama maili gonder. Hata olursa kayit islemini bozmaz.
+// GEREKLI: BREVO_API_KEY secret (xkeysib-... ile baslayan Brevo API v3 anahtari)
+// ISTEGE BAGLI: BREVO_FROM secret ("Oyun <mail@adres.com>" seklinde). Yoksa hesaptaki dogrulanmis ilk gonderici kullanilir.
+async function karsilamaMaili(env, email, kullaniciAdi) {
+  if (!env.BREVO_API_KEY) return;
+  try {
+    let fromEmail = env.BREVO_FROM || null;
+    let fromName = env.BREVO_FROM_NAME || "KuZGuN Ticaret";
+    if (!fromEmail) {
+      const sr = await fetch("https://api.brevo.com/v3/senders", {
+        headers: { "api-key": env.BREVO_API_KEY, "accept": "application/json" }
+      });
+      if (sr.ok) {
+        const sd = await sr.json();
+        const dogrulanmis = (sd.senders || []).find(function (s) { return s.verified; });
+        if (dogrulanmis) {
+          fromEmail = dogrulanmis.email;
+          if (dogrulanmis.name) fromName = dogrulanmis.name;
+        }
+      }
+    }
+    if (!fromEmail) return;
+    const html = `<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#141413;color:#f5f4ed;border-radius:12px">
+                  <h1 style="color:#e8b64c;text-align:center">\u{1F4B0} KuZGuN Ticaret</h1>
+                  <p>Merhaba <b>${kullaniciAdi}</b>,</p>
+                  <p>KuZGuN Ticaret'e ho\u015F geldin! Hesab\u0131n ba\u015Far\u0131yla olu\u015Fturuldu.</p>
+                  <div style="background:#262624;border-radius:8px;padding:16px;margin:16px 0">
+                    <p style="margin:4px 0"><b>Kullan\u0131c\u0131 Ad\u0131:</b> ${kullaniciAdi}</p>
+                    <p style="margin:4px 0"><b>E-posta:</b> ${email}</p>
+                  </div>
+                  <p>Hemen oyna: <a href="https://kuzgunkral.github.io/kapitalist/" style="color:#e8b64c">KuZGuN Ticaret</a></p>
+                  <p style="color:#8b8b85;font-size:12px;margin-top:20px">KuZGuN Ticaret Ekibi</p>
+                </div>`;
+    const mr = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "api-key": env.BREVO_API_KEY,
+        "content-type": "application/json",
+        "accept": "application/json"
+      },
+      body: JSON.stringify({
+        sender: { name: fromName, email: fromEmail },
+        to: [{ email: email, name: kullaniciAdi }],
+        subject: "KuZGuN Ticaret - Hesabin Hazir! \u{1F4B0}",
+        htmlContent: html
+      })
+    });
+    if (!mr.ok) {
+      const hataMetni = await mr.text().catch(function () { return ""; });
+      console.log("Brevo mail hatasi:", mr.status, hataMetni);
+    }
+  } catch (e) {}
+}
+__name(karsilamaMaili, "karsilamaMaili");
 async function adminMi(env, kadi) {
   if (ADMINLAR.indexOf(kadi) >= 0) return true;
   const m = await modGet(env, kadi);
@@ -138,6 +236,12 @@ var index_default = {
         const { email, kullanici_adi, sifre } = await request.json();
         if (!email || !kullanici_adi || !sifre)
           return jsonResponse({ hata: "Email, kullanici_adi ve sifre gerekli" }, 400);
+        if (typeof sifre !== "string" || sifre.length < 6 || sifre.length > 128)
+          return jsonResponse({ hata: "Sifre en az 6 karakter olmali" }, 400);
+        if (typeof kullanici_adi !== "string" || !/^[A-Za-z0-9_]{3,20}$/.test(kullanici_adi))
+          return jsonResponse({ hata: "Kullanici adi 3-20 karakter, sadece harf/rakam/alt cizgi olmali" }, 400);
+        if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 254)
+          return jsonResponse({ hata: "Gecerli bir email giriniz" }, 400);
         const mevcutEmail = await env.DB.prepare("SELECT id FROM kullanicilar WHERE email=?").bind(email.toLowerCase()).first();
         if (mevcutEmail) return jsonResponse({ hata: "Bu email zaten kayitli" }, 400);
         const mevcutKadi = await env.DB.prepare("SELECT id FROM kullanicilar WHERE kullanici_adi=?").bind(kullanici_adi).first();
@@ -153,31 +257,7 @@ var index_default = {
           "INSERT INTO oturumlar (token,kullanici_id,son_kullanim) VALUES (?,?,?)"
         ).bind(token, id, Date.now() + 7 * 24 * 60 * 60 * 1e3).run();
         try {
-          if (env.RESEND_API_KEY) {
-            await fetch("https://api.resend.com/emails", {
-              method: "POST",
-              headers: {
-                "Authorization": "Bearer " + env.RESEND_API_KEY,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                from: "Kapitalist <onboarding@resend.dev>",
-                to: [email],
-                subject: "Kapitalist - Ho\u015F Geldin!",
-                html: `<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#0d1117;color:#e6edf3;border-radius:12px">
-                  <h1 style="color:#58a6ff;text-align:center">\u{1F4B0} Kapitalist</h1>
-                  <p>Merhaba <b>${kullanici_adi}</b>,</p>
-                  <p>Kapitalist'e ho\u015F geldin! Hesab\u0131n ba\u015Far\u0131yla olu\u015Fturuldu.</p>
-                  <div style="background:#161b22;border-radius:8px;padding:16px;margin:16px 0">
-                    <p style="margin:4px 0"><b>Kullan\u0131c\u0131 Ad\u0131:</b> ${kullanici_adi}</p>
-                    <p style="margin:4px 0"><b>E-posta:</b> ${email}</p>
-                  </div>
-                  <p>Hemen oyna: <a href="https://kuzgunkral.github.io/kapitalist/" style="color:#58a6ff">Kapitalist</a></p>
-                  <p style="color:#8b949e;font-size:12px;margin-top:20px">Kapitalist Ekibi</p>
-                </div>`
-              })
-            });
-          }
+          await karsilamaMaili(env, email, kullanici_adi);
         } catch (mailErr) {
         }
         return jsonResponse({ basarili: true, token, kullanici_adi, uid: id });
@@ -192,8 +272,17 @@ var index_default = {
         if (!girisAdi || !sifre) return jsonResponse({ hata: "Kullanici adi ve sifre gerekli" }, 400);
         const k = await env.DB.prepare("SELECT * FROM kullanicilar WHERE kullanici_adi=? OR email=?").bind(girisAdi, girisAdi).first();
         if (!k) return jsonResponse({ hata: "Email veya sifre hatali" }, 401);
-        const hash = await hashSifre(sifre, k.sifre_salt);
-        if (hash !== k.sifre_hash) return jsonResponse({ hata: "Email veya sifre hatali" }, 401);
+        if (!(await sifreDogrula(sifre, k.sifre_salt, k.sifre_hash))) return jsonResponse({ hata: "Email veya sifre hatali" }, 401);
+        // Dondurulmus hesap giremez
+        await modTabloOlustur(env);
+        const _gm = await modGet(env, k.kullanici_adi);
+        if (_gm.ban === 1) return jsonResponse({ hata: "Hesabiniz dondurulmus. Yonetici ile iletisime gecin." }, 403);
+        // Eski SHA-256 kayitlari ilk giriste PBKDF2'ye yukselt
+        if (k.sifre_hash && k.sifre_hash.indexOf("pbkdf2$") !== 0) {
+          try {
+            await env.DB.prepare("UPDATE kullanicilar SET sifre_hash=? WHERE id=?").bind(await hashSifre(sifre, k.sifre_salt), k.id).run();
+          } catch (upErr) {}
+        }
         await env.DB.prepare("DELETE FROM oturumlar WHERE kullanici_id=? AND son_kullanim<?").bind(k.id, Date.now()).run();
         const token = tokenUret();
         await env.DB.prepare(
@@ -207,7 +296,7 @@ var index_default = {
     if (path === "/dev-giris" && request.method === "POST") {
       try {
         const { sifre } = await request.json();
-        if (!sifre || sifre !== DEV_SIFRE) return jsonResponse({ ok: false });
+        if (!sifre || sifre !== (env.DEV_SIFRE || DEV_SIFRE)) return jsonResponse({ ok: false });
         return jsonResponse({ ok: true });
       } catch (e) {
         return jsonResponse({ ok: false, hata: e.message }, 500);
@@ -231,17 +320,93 @@ var index_default = {
         const token = tokenFromRequest(request);
         const uid = await tokenDogrula(env, token);
         if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        // Dondurulmus hesap save yazamaz
+        {
+          const _bk = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(uid).first();
+          if (_bk) {
+            const _m = await modGet(env, _bk.kullanici_adi);
+            if (_m.ban === 1) return jsonResponse({ hata: "Hesabiniz dondurulmus. Yonetici ile iletisime gecin." }, 403);
+          }
+        }
         const { surum, veri } = await request.json();
         if (!veri) return jsonResponse({ hata: "Veri eksik" }, 400);
         const veriJson = JSON.stringify(veri);
+        // Boyut limiti: devasa kayit ile DB sismesini engelle
+        if (veriJson.length > 500000) return jsonResponse({ hata: "Kayit cok buyuk" }, 413);
         await ekTablolar(env);
         const benimKadi = await kadiBul(env, uid);
+        // --- Asama 1: hile korumasi ---
+        // Istemci tamamen guvenilmez; para/elmas/gun degerleri burada dogrulanir.
+        // Ihlal halinde kayit YAZILMAZ (eski gecerli kayit korunur) ve anomali_log'a yazilir.
+        const tekSayi = (v) => typeof v === "number" && isFinite(v);
+        const PARA_MAX = 1e12;          // 1 trilyon: meşru oynanisla ulasilamaz
+        const ELMAS_MAX = 1e9;
+        const PARA_ARTIS_MAX = 5e8;     // tek save'te max 500M artis (ciro yoksa)
+        const ELMAS_ARTIS_MAX = 1e6;    // tek save'te max 1M elmas artisi
+        const red = async (tur, detay) => {
+          await anomaliLog(env, uid, benimKadi, tur, detay);
+          return jsonResponse({ hata: "Kayit reddedildi (hile korumasi): " + tur }, 400);
+        };
+        const money = Number(veri.money), elmas = Number(veri.elmas), day = Number(veri.day);
+        if (!tekSayi(money) || !tekSayi(elmas) || !tekSayi(day) || money < 0 || elmas < 0 || day < 1)
+          return await red("gecersiz_deger", "money=" + veri.money + " elmas=" + veri.elmas + " day=" + veri.day);
+        if (money > PARA_MAX || elmas > ELMAS_MAX)
+          return await red("limit_asimi", "money=" + money + " elmas=" + elmas);
+        const surumKey = surum || "v1";
+        const existingRow = await env.DB.prepare("SELECT id,veri FROM oyun_kayitlari WHERE kullanici_id=? AND surum=?").bind(uid, surumKey).first();
+        if (existingRow) {
+          let eski = null;
+          try { eski = JSON.parse(existingRow.veri); } catch (e) {}
+          if (eski) {
+            const eDay = tekSayi(Number(eski.day)) ? Number(eski.day) : 1;
+            if (day < eDay) return await red("gun_geri_gitti", "eski=" + eDay + " yeni=" + day);
+            const eMoney = tekSayi(Number(eski.money)) ? Number(eski.money) : 0;
+            const eElmas = tekSayi(Number(eski.elmas)) ? Number(eski.elmas) : 0;
+            const paraArtis = money - eMoney;
+            const elmasArtis = elmas - eElmas;
+            // --- Günlük ciro (dailyRev) bazlı kontrol ---
+            // Istemci "Bugün" geliri (satislar) dailyRev olarak gonderir; gun sonunda sifirlanir.
+            // Kural: para artisi, ciro artisini (faiz/bonus toleransiyla) asamaz.
+            // Buyuk hamleler (50-60 milyar kripto satisi) ciroyla birlikte geldigi icin gecer.
+            const ayniGun = (day === eDay);
+            const ciro = (tekSayi(Number(veri.dailyRev)) ? Number(veri.dailyRev) : null);
+            const eCiro = (eski && tekSayi(Number(eski.dailyRev)) ? Number(eski.dailyRev) : null);
+            // Tolerans: ciro disi gelirler (banka faizi, staking, bonus) icin pay
+            const CIRO_TOLERANS = 1e8;      // 100M
+            const CIRO_CARPAN = 1.5;
+            if (ciro !== null) {
+              // Baz ciro: ayni gun -> ciro artisi; gun degistiyse -> ciro sifirdan baslar (reset),
+              // dolayisiyla yeni dailyRev'in kendisi bazdir (gece yarisi sonrasi buyuk satis dahil).
+              const baz = ayniGun ? (eCiro !== null ? ciro - eCiro : ciro) : ciro;
+              const izinVerilen = Math.max(PARA_ARTIS_MAX, baz * CIRO_CARPAN + CIRO_TOLERANS);
+              if (paraArtis > izinVerilen)
+                return await red("para_sicramasi", "artis=" + paraArtis + " ciroBaz=" + Math.round(baz) + " izin=" + Math.round(izinVerilen));
+              // Tavanin alti ama ciroyla acikca tutarsiz -> ban karari icin logla (save yazilir)
+              if (paraArtis > 1e8 && paraArtis > baz * 3 + 2e8)
+                await anomaliLog(env, uid, benimKadi, "supheli_ciro_farki", "artis=" + paraArtis + " ciroBaz=" + Math.round(baz));
+            } else {
+              // Ciro verisi yok (push edilmemis eski istemci): yuksek tavan + log.
+              // 100 milyar: tek hamlede meşru buyuk satislara yetecek; uzeri kesin hile.
+              if (paraArtis > 1e11)
+                return await red("para_sicramasi", "artis=" + paraArtis + " (ciro verisi yok, tavan 100 milyar)");
+              if (paraArtis > 1e9)
+                await anomaliLog(env, uid, benimKadi, "supheli_ciro_yok", "artis=" + paraArtis + " (ciro verisi yok)");
+            }
+            if (elmasArtis > ELMAS_ARTIS_MAX)
+              return await red("elmas_sicramasi", "artis=" + elmasArtis);
+          }
+        }
         if (benimKadi) await kullaniciIstatistikGuncelle(env, benimKadi, veri);
-        const existing = await env.DB.prepare("SELECT id FROM oyun_kayitlari WHERE kullanici_id=? AND surum=?").bind(uid, surum || "v1").first();
-        if (existing) {
-          await env.DB.prepare("UPDATE oyun_kayitlari SET veri=?,guncellendi=? WHERE kullanici_id=? AND surum=?").bind(veriJson, Date.now(), uid, surum || "v1").run();
+        // Admin geri alma icin son 10 save'in kopyasini tut
+        try {
+          await env.DB.prepare("CREATE TABLE IF NOT EXISTS save_gecmis (id INTEGER PRIMARY KEY AUTOINCREMENT, kullanici_id TEXT, surum TEXT, veri TEXT, zaman INTEGER)").run();
+          await env.DB.prepare("INSERT INTO save_gecmis (kullanici_id,surum,veri,zaman) VALUES (?,?,?,?)").bind(uid, surumKey, veriJson, Date.now()).run();
+          await env.DB.prepare("DELETE FROM save_gecmis WHERE kullanici_id=? AND id NOT IN (SELECT id FROM save_gecmis WHERE kullanici_id=? ORDER BY id DESC LIMIT 10)").bind(uid, uid).run();
+        } catch (hErr) {}
+        if (existingRow) {
+          await env.DB.prepare("UPDATE oyun_kayitlari SET veri=?,guncellendi=? WHERE kullanici_id=? AND surum=?").bind(veriJson, Date.now(), uid, surumKey).run();
         } else {
-          await env.DB.prepare("INSERT INTO oyun_kayitlari (kullanici_id,surum,veri,olusturuldu,guncellendi) VALUES (?,?,?,?,?)").bind(uid, surum || "v1", veriJson, Date.now(), Date.now()).run();
+          await env.DB.prepare("INSERT INTO oyun_kayitlari (kullanici_id,surum,veri,olusturuldu,guncellendi) VALUES (?,?,?,?,?)").bind(uid, surumKey, veriJson, Date.now(), Date.now()).run();
         }
         return jsonResponse({ basarili: true });
       } catch (e) {
@@ -289,8 +454,11 @@ var index_default = {
         const { mesaj } = await request.json();
         if (!mesaj || mesaj.trim().length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
         if (mesaj.length > 200) return jsonResponse({ hata: "Mesaj cok uzun" }, 400);
+        // XSS korumasi: HTML etiket/olay karakterlerini temizle
+        const temizMesaj = mesaj.trim().replace(/[<>`]/g, "").replace(/javascript:/gi, "");
+        if (temizMesaj.length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
         const id = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO global_sohbet (id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?)").bind(id, kadi, mesaj.trim(), Date.now()).run();
+        await env.DB.prepare("INSERT INTO global_sohbet (id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?)").bind(id, kadi, temizMesaj, Date.now()).run();
         await env.DB.prepare("DELETE FROM global_sohbet WHERE id NOT IN (SELECT id FROM global_sohbet ORDER BY zaman DESC LIMIT 50)").run();
         return jsonResponse({ basarili: true });
       } catch (e) {
@@ -304,6 +472,7 @@ var index_default = {
         let online = [];
         let kapali = 0;
         let davetler = [];
+        let benimMute = 0;
         const token = tokenFromRequest(request);
         const uid = await tokenDogrula(env, token);
         if (uid) {
@@ -317,9 +486,14 @@ var index_default = {
             davetler = dv.results || [];
             const st = await env.DB.prepare("SELECT kapali FROM sohbet_durum WHERE k='1'").first();
             kapali = st && st.kapali ? 1 : 0;
+            try {
+              await modTabloOlustur(env);
+              const md = await env.DB.prepare("SELECT mute_until FROM moderasyon WHERE kullanici_adi=?").bind(benim).first();
+              if (md && md.mute_until && md.mute_until > Date.now()) benimMute = md.mute_until;
+            } catch (e) {}
           }
         }
-        return jsonResponse({ mesajlar: results || [], online, kapali, davetler });
+        return jsonResponse({ mesajlar: results || [], online, kapali, davetler, benim_mute: benimMute || 0 });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -872,9 +1046,10 @@ var index_default = {
         const uid = await tokenDogrula(env, token);
         if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
         const { eski_sifre, yeni_sifre } = await request.json();
+        if (typeof yeni_sifre !== "string" || yeni_sifre.length < 6 || yeni_sifre.length > 128)
+          return jsonResponse({ hata: "Yeni sifre en az 6 karakter olmali" }, 400);
         const k = await env.DB.prepare("SELECT * FROM kullanicilar WHERE id=?").bind(uid).first();
-        const hash = await hashSifre(eski_sifre, k.sifre_salt);
-        if (hash !== k.sifre_hash) return jsonResponse({ hata: "Eski sifre yanlis" }, 401);
+        if (!(await sifreDogrula(eski_sifre, k.sifre_salt, k.sifre_hash))) return jsonResponse({ hata: "Eski sifre yanlis" }, 401);
         const yeniSalt = saltUret();
         const yeniHash = await hashSifre(yeni_sifre, yeniSalt);
         await env.DB.prepare("UPDATE kullanicilar SET sifre_hash=?,sifre_salt=? WHERE id=?").bind(yeniHash, yeniSalt, uid).run();
@@ -899,11 +1074,13 @@ var index_default = {
         }
         const { ad } = await request.json();
         if (!ad || ad.length < 2 || ad.length > 20) return jsonResponse({ hata: "Klan adi 2-20 karakter olmali" }, 400);
-        const mevcutKlan = await env.DB.prepare("SELECT id FROM klanlar WHERE ad=?").bind(ad).first();
+        const temizAd = metniTemizle(ad).trim();
+        if (temizAd.length < 2) return jsonResponse({ hata: "Klan adi gecersiz karakterler iceriyor" }, 400);
+        const mevcutKlan = await env.DB.prepare("SELECT id FROM klanlar WHERE ad=?").bind(temizAd).first();
         if (mevcutKlan) return jsonResponse({ hata: "Bu klan adi alinmis" }, 400);
         const klanId = crypto.randomUUID();
         const now = Date.now();
-        await env.DB.prepare("INSERT INTO klanlar (id,ad,lider_id,seviye,xp,kasa_tl,banka,olusturuldu) VALUES (?,?,?,1,0,0,0,?)").bind(klanId, ad, uid, now).run();
+        await env.DB.prepare("INSERT INTO klanlar (id,ad,lider_id,seviye,xp,kasa_tl,banka,olusturuldu) VALUES (?,?,?,1,0,0,0,?)").bind(klanId, temizAd, uid, now).run();
         await env.DB.prepare("INSERT INTO klan_uyeler (kullanici_id,klan_id,rol,katildi) VALUES (?,?,?,?)").bind(uid, klanId, "lider", now).run();
         const logId = crypto.randomUUID();
         await env.DB.prepare("INSERT INTO klan_log (id,klan_id,mesaj,zaman) VALUES (?,?,?,?)").bind(logId, klanId, k.kullanici_adi + " klani kurdu", now).run();
@@ -1187,15 +1364,37 @@ var index_default = {
         return jsonResponse({ hata: e.message }, 500);
       }
     }
+    if (path === "/klan/sohbet-durum" && request.method === "POST") {
+      try {
+        const token = tokenFromRequest(request);
+        const uid = await tokenDogrula(env, token);
+        if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
+        const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
+        if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 403);
+        if (uyelik.rol !== "lider" && uyelik.rol !== "yardimci") return jsonResponse({ hata: "Bu islem icin lider veya yardimci olmalisiniz" }, 403);
+        await ekTablolar(env);
+        const { kapali } = await request.json();
+        await env.DB.prepare("UPDATE klanlar SET sohbet_kapali=? WHERE id=?").bind(kapali ? 1 : 0, uyelik.klan_id).run();
+        return jsonResponse({ basarili: true, kapali: kapali ? 1 : 0 });
+      } catch (e) {
+        return jsonResponse({ hata: e.message }, 500);
+      }
+    }
     if (path === "/klan/sohbet" && request.method === "POST") {
       try {
         const token = tokenFromRequest(request);
         const uid = await tokenDogrula(env, token);
         if (!uid) return jsonResponse({ hata: "Giris yapmaniz gerekiyor" }, 401);
         const k = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(uid).first();
-        const uyelik = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
+        const uyelik = await env.DB.prepare("SELECT klan_id,rol FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ hata: "Klana uye degilsiniz" }, 400);
         await klanModTabloOlustur(env);
+        let _sohKapali = 0;
+        try {
+          const _sk = await env.DB.prepare("SELECT sohbet_kapali FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
+          _sohKapali = _sk && _sk.sohbet_kapali ? 1 : 0;
+        } catch (e) {}
+        if (_sohKapali === 1 && uyelik.rol !== "lider" && uyelik.rol !== "yardimci") return jsonResponse({ hata: "Klan sohbeti yonetici tarafindan kapatildi" }, 403);
         const klanMod = await klanModGet(env, uyelik.klan_id, uid);
         if (klanMod.ban === 1) return jsonResponse({ hata: "Klan sohbetinden banlandiniz" }, 403);
         if (klanMod.mute_until > Date.now()) {
@@ -1204,8 +1403,10 @@ var index_default = {
         }
         const { mesaj } = await request.json();
         if (!mesaj || mesaj.trim().length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
+        const temizMesaj = metniTemizle(mesaj).trim();
+        if (temizMesaj.length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
         const id = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO klan_sohbet (id,klan_id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?,?)").bind(id, uyelik.klan_id, k.kullanici_adi, mesaj.trim(), Date.now()).run();
+        await env.DB.prepare("INSERT INTO klan_sohbet (id,klan_id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?,?)").bind(id, uyelik.klan_id, k.kullanici_adi, temizMesaj, Date.now()).run();
         await env.DB.prepare("DELETE FROM klan_sohbet WHERE klan_id=? AND id NOT IN (SELECT id FROM klan_sohbet WHERE klan_id=? ORDER BY zaman DESC LIMIT 50)").bind(uyelik.klan_id, uyelik.klan_id).run();
         return jsonResponse({ basarili: true });
       } catch (e) {
@@ -1220,7 +1421,15 @@ var index_default = {
         const uyelik = await env.DB.prepare("SELECT klan_id FROM klan_uyeler WHERE kullanici_id=?").bind(uid).first();
         if (!uyelik) return jsonResponse({ mesajlar: [] });
         const { results } = await env.DB.prepare("SELECT id,kullanici_adi,mesaj,zaman FROM klan_sohbet WHERE klan_id=? ORDER BY zaman ASC LIMIT 50").bind(uyelik.klan_id).all();
-        return jsonResponse({ mesajlar: results || [] });
+        let _kapali = 0;
+        let _benimMute = 0;
+        try {
+          const _sk = await env.DB.prepare("SELECT sohbet_kapali FROM klanlar WHERE id=?").bind(uyelik.klan_id).first();
+          _kapali = _sk && _sk.sohbet_kapali ? 1 : 0;
+          const _km = await klanModGet(env, uyelik.klan_id, uid);
+          _benimMute = _km && _km.mute_until > Date.now() ? _km.mute_until : 0;
+        } catch (e) {}
+        return jsonResponse({ mesajlar: results || [], kapali: _kapali, benim_mute: _benimMute });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
@@ -1270,8 +1479,10 @@ var index_default = {
         const { mesaj } = await request.json();
         if (!mesaj || mesaj.trim().length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
         if (mesaj.length > 200) return jsonResponse({ hata: "Mesaj cok uzun" }, 400);
+        const temizMesaj = metniTemizle(mesaj).trim();
+        if (temizMesaj.length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
         const id = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO global_sohbet (id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?)").bind(id, k.kullanici_adi, mesaj.trim(), Date.now()).run();
+        await env.DB.prepare("INSERT INTO global_sohbet (id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?)").bind(id, k.kullanici_adi, temizMesaj, Date.now()).run();
         await env.DB.prepare("DELETE FROM global_sohbet WHERE id NOT IN (SELECT id FROM global_sohbet ORDER BY zaman DESC LIMIT 50)").run();
         return jsonResponse({ basarili: true });
       } catch (e) {
@@ -1403,8 +1614,10 @@ var index_default = {
         if (!uyelik) return jsonResponse({ hata: "Klana uyesiniz degil" }, 400);
         const { mesaj } = await request.json();
         if (!mesaj || mesaj.trim().length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
+        const temizMesaj = metniTemizle(mesaj).trim();
+        if (temizMesaj.length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
         const id = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO klan_sohbet (id,klan_id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?,?)").bind(id, uyelik.klan_id, k.kullanici_adi, mesaj.trim(), Date.now()).run();
+        await env.DB.prepare("INSERT INTO klan_sohbet (id,klan_id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?,?)").bind(id, uyelik.klan_id, k.kullanici_adi, temizMesaj, Date.now()).run();
         return jsonResponse({ basarili: true });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
@@ -1461,17 +1674,135 @@ var index_default = {
         const k = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE id=?").bind(uid).first();
         const { mesaj } = await request.json();
         if (!mesaj || mesaj.trim().length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
+        const temizMesaj = metniTemizle(mesaj).trim();
+        if (temizMesaj.length === 0) return jsonResponse({ hata: "Mesaj bos olamaz" }, 400);
         const count = await env.DB.prepare("SELECT COUNT(*) as c FROM global_sohbet").first();
         if (count && count.c >= 50) {
           const en_eski = await env.DB.prepare("SELECT id FROM global_sohbet ORDER BY zaman ASC LIMIT 1").first();
           if (en_eski) await env.DB.prepare("DELETE FROM global_sohbet WHERE id=?").bind(en_eski.id).run();
         }
         const id = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO global_sohbet (id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?)").bind(id, k.kullanici_adi, mesaj.trim(), Date.now()).run();
+        await env.DB.prepare("INSERT INTO global_sohbet (id,kullanici_adi,mesaj,zaman) VALUES (?,?,?,?)").bind(id, k.kullanici_adi, temizMesaj, Date.now()).run();
         return jsonResponse({ basarili: true });
       } catch (e) {
         return jsonResponse({ hata: e.message }, 500);
       }
+    }
+    // --- Admin mudahale paneli (yalnizca adminler) ---
+    const adminYetki = async () => {
+      const t = tokenFromRequest(request);
+      const auid = await tokenDogrula(env, t);
+      if (!auid) return null;
+      if (!(await adminKontrol(env, auid))) return null;
+      return auid;
+    };
+    const adminLog = (auid, kadi, tur, detay) => anomaliLog(env, auid, kadi, tur, detay);
+    if (path === "/admin/anomaliler" && request.method === "GET") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      try {
+        await env.DB.prepare("CREATE TABLE IF NOT EXISTS anomali_log (id INTEGER PRIMARY KEY AUTOINCREMENT, kullanici_id INTEGER, kadi TEXT, tur TEXT, detay TEXT, zaman INTEGER)").run();
+        const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 500);
+        const { results } = await env.DB.prepare("SELECT id,kadi,tur,detay,zaman FROM anomali_log ORDER BY id DESC LIMIT ?").bind(limit).run();
+        return jsonResponse({ basarili: true, anomaliler: results || [] });
+      } catch (e) { return jsonResponse({ hata: e.message }, 500); }
+    }
+    if (path === "/admin/gecmis" && request.method === "GET") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      try {
+        const kadi = url.searchParams.get("kadi") || "";
+        const u = await env.DB.prepare("SELECT id FROM kullanicilar WHERE kullanici_adi=?").bind(kadi).first();
+        if (!u) return jsonResponse({ hata: "Kullanici bulunamadi" }, 404);
+        await env.DB.prepare("CREATE TABLE IF NOT EXISTS save_gecmis (id INTEGER PRIMARY KEY AUTOINCREMENT, kullanici_id TEXT, surum TEXT, veri TEXT, zaman INTEGER)").run();
+        const { results } = await env.DB.prepare("SELECT id,veri,zaman FROM save_gecmis WHERE kullanici_id=? ORDER BY id DESC LIMIT 20").bind(u.id).run();
+        const gecmis = (results || []).map(r => {
+          let money = null, elmas = null, day = null;
+          try { const v = JSON.parse(r.veri); money = v.money; elmas = v.elmas; day = v.day; } catch (e) {}
+          return { id: r.id, zaman: r.zaman, money, elmas, day };
+        });
+        return jsonResponse({ basarili: true, gecmis });
+      } catch (e) { return jsonResponse({ hata: e.message }, 500); }
+    }
+    if (path === "/admin/aksiyon" && request.method === "POST") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      try {
+        const { aksiyon, kadi, gecmisId, money, elmas, day, klan } = await request.json();
+        const kadiGuv = String(kadi || "").trim().slice(0, 40);
+        const u = kadiGuv ? await env.DB.prepare("SELECT id,kullanici_adi FROM kullanicilar WHERE kullanici_adi=?").bind(kadiGuv).first() : null;
+        if (["dondur", "serbest", "sifirla", "kullanici_sil", "geri_al", "edit"].indexOf(aksiyon) >= 0 && !u)
+          return jsonResponse({ hata: "Kullanici bulunamadi: " + kadiGuv }, 404);
+        if (aksiyon === "dondur") {
+          await env.DB.prepare("INSERT INTO moderasyon (kullanici_adi,ban,guncellendi) VALUES (?,1,?) ON CONFLICT(kullanici_adi) DO UPDATE SET ban=1, guncellendi=?").bind(kadiGuv, Date.now(), Date.now()).run();
+          await env.DB.prepare("DELETE FROM oturumlar WHERE kullanici_id=?").bind(u.id).run();
+          await adminLog(auid, kadiGuv, "admin_dondurdu", "Hesap donduruldu, oturumlar kapandi");
+          return jsonResponse({ basarili: true, mesaj: kadiGuv + " donduruldu" });
+        }
+        if (aksiyon === "serbest") {
+          await env.DB.prepare("INSERT INTO moderasyon (kullanici_adi,ban,guncellendi) VALUES (?,0,?) ON CONFLICT(kullanici_adi) DO UPDATE SET ban=0, guncellendi=?").bind(kadiGuv, Date.now(), Date.now()).run();
+          await adminLog(auid, kadiGuv, "admin_serbest", "Hesap acildi");
+          return jsonResponse({ basarili: true, mesaj: kadiGuv + " serbest birakildi" });
+        }
+        if (aksiyon === "sifirla") {
+          await env.DB.prepare("DELETE FROM oyun_kayitlari WHERE kullanici_id=?").bind(u.id).run();
+          await adminLog(auid, kadiGuv, "admin_sifirladi", "Oyun kaydi sifirlandi");
+          return jsonResponse({ basarili: true, mesaj: kadiGuv + " oyun kaydi sifirlandi" });
+        }
+        if (aksiyon === "kullanici_sil") {
+          await env.DB.prepare("DELETE FROM oyun_kayitlari WHERE kullanici_id=?").bind(u.id).run();
+          await env.DB.prepare("DELETE FROM oturumlar WHERE kullanici_id=?").bind(u.id).run();
+          await env.DB.prepare("DELETE FROM klan_uyeler WHERE kullanici_id=?").bind(u.id).run();
+          await env.DB.prepare("DELETE FROM klan_davetler WHERE alici_kadi=?").bind(kadiGuv).run();
+          await env.DB.prepare("DELETE FROM klan_istekler WHERE kullanici_id=?").bind(u.id).run();
+          await env.DB.prepare("DELETE FROM anomali_log WHERE kadi=?").bind(kadiGuv).run();
+          await env.DB.prepare("DELETE FROM save_gecmis WHERE kullanici_id=?").bind(u.id).run();
+          await env.DB.prepare("DELETE FROM moderasyon WHERE kullanici_adi=?").bind(kadiGuv).run();
+          await env.DB.prepare("DELETE FROM kullanicilar WHERE id=?").bind(u.id).run();
+          await adminLog(auid, kadiGuv, "admin_sildi", "Kullanici tamamen silindi");
+          return jsonResponse({ basarili: true, mesaj: kadiGuv + " silindi" });
+        }
+        if (aksiyon === "geri_al") {
+          const gid = parseInt(gecmisId, 10);
+          const row = await env.DB.prepare("SELECT surum,veri,zaman FROM save_gecmis WHERE id=? AND kullanici_id=?").bind(gid, u.id).first();
+          if (!row) return jsonResponse({ hata: "Gecmis kayit bulunamadi" }, 404);
+          const surumKey2 = row.surum || "v1";
+          const ex = await env.DB.prepare("SELECT id FROM oyun_kayitlari WHERE kullanici_id=? AND surum=?").bind(u.id, surumKey2).first();
+          if (ex) await env.DB.prepare("UPDATE oyun_kayitlari SET veri=?,guncellendi=? WHERE kullanici_id=? AND surum=?").bind(row.veri, Date.now(), u.id, surumKey2).run();
+          else await env.DB.prepare("INSERT INTO oyun_kayitlari (kullanici_id,surum,veri,olusturuldu,guncellendi) VALUES (?,?,?,?,?)").bind(u.id, surumKey2, row.veri, Date.now(), Date.now()).run();
+          await adminLog(auid, kadiGuv, "admin_gerialdi", "Kayit " + new Date(row.zaman).toISOString() + " haline geri alindi");
+          return jsonResponse({ basarili: true, mesaj: kadiGuv + " kaydi geri alindi" });
+        }
+        if (aksiyon === "edit") {
+          const cur = await env.DB.prepare("SELECT veri,surum FROM oyun_kayitlari WHERE kullanici_id=? ORDER BY guncellendi DESC LIMIT 1").bind(u.id).first();
+          if (!cur) return jsonResponse({ hata: "Oyun kaydi yok" }, 404);
+          let v;
+          try { v = JSON.parse(cur.veri); } catch (e) { return jsonResponse({ hata: "Kayit okunamadi" }, 500); }
+          if (typeof money === "number" && isFinite(money) && money >= 0) v.money = money;
+          if (typeof elmas === "number" && isFinite(elmas) && elmas >= 0) v.elmas = elmas;
+          if (typeof day === "number" && isFinite(day) && day >= 1) v.day = day;
+          const yeniVeri = JSON.stringify(v);
+          await env.DB.prepare("CREATE TABLE IF NOT EXISTS save_gecmis (id INTEGER PRIMARY KEY AUTOINCREMENT, kullanici_id TEXT, surum TEXT, veri TEXT, zaman INTEGER)").run();
+          await env.DB.prepare("INSERT INTO save_gecmis (kullanici_id,surum,veri,zaman) VALUES (?,?,?,?)").bind(u.id, cur.surum, cur.veri, Date.now()).run();
+          await env.DB.prepare("UPDATE oyun_kayitlari SET veri=?,guncellendi=? WHERE kullanici_id=? AND surum=?").bind(yeniVeri, Date.now(), u.id, cur.surum).run();
+          await adminLog(auid, kadiGuv, "admin_editle", "money=" + v.money + " elmas=" + v.elmas + " day=" + v.day);
+          return jsonResponse({ basarili: true, mesaj: kadiGuv + " kaydi guncellendi" });
+        }
+        if (aksiyon === "klan_sil") {
+          const klAd = String(klan || "").trim().slice(0, 40);
+          const kl = await env.DB.prepare("SELECT id FROM klanlar WHERE ad=? OR id=?").bind(klAd, klAd).first();
+          if (!kl) return jsonResponse({ hata: "Klan bulunamadi: " + klAd }, 404);
+          await env.DB.prepare("DELETE FROM klan_uyeler WHERE klan_id=?").bind(kl.id).run();
+          await env.DB.prepare("DELETE FROM klan_davetler WHERE klan_id=?").bind(kl.id).run();
+          await env.DB.prepare("DELETE FROM klan_istekler WHERE klan_id=?").bind(kl.id).run();
+          await env.DB.prepare("DELETE FROM klan_banka_log WHERE klan_id=?").bind(kl.id).run();
+          await env.DB.prepare("DELETE FROM klan_mod WHERE klan_id=?").bind(kl.id).run();
+          await env.DB.prepare("DELETE FROM klanlar WHERE id=?").bind(kl.id).run();
+          await adminLog(auid, kadiGuv, "admin_klansildi", "Klan silindi: " + klAd);
+          return jsonResponse({ basarili: true, mesaj: "Klan silindi: " + klAd });
+        }
+        return jsonResponse({ hata: "Bilinmeyen aksiyon: " + aksiyon }, 400);
+      } catch (e) { return jsonResponse({ hata: e.message }, 500); }
     }
     return jsonResponse({ hata: "Endpoint bulunamadi: " + path }, 404);
   }

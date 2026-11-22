@@ -1,10 +1,10 @@
 ﻿import sys, os, json, base64, shutil, subprocess, urllib.request
 from datetime import datetime
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QTabWidget, QLineEdit, QCheckBox, QMessageBox, QStackedWidget, QSplitter, QTextEdit)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QTabWidget, QLineEdit, QCheckBox, QMessageBox, QStackedWidget, QSplitter, QTextEdit, QDialog, QTableWidget, QTableWidgetItem, QComboBox, QHeaderView, QAbstractItemView)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
-from PyQt6.QtCore import QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QUrl, Qt, pyqtSignal, QDateTime
+from PyQt6.QtGui import QFont, QColor
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CF_API = 'https://kapitalist-api.gitbaskabul.workers.dev'
@@ -152,6 +152,200 @@ class KonsolWidget(QTextEdit):
         m.addAction('🗑️  Konsolu Temizle', self.clear)
         m.exec(self.mapToGlobal(pos))
 
+ADMIN_CSS = """
+QDialog{background:#07111f;}
+QLabel#pt{color:#10b981;font-size:16px;font-weight:800;padding:2px;}
+QLabel#ps{color:#6080a0;font-size:11px;}
+QLineEdit{background:#060f1a;border:1px solid #1e3a5f;border-radius:6px;color:#d8e8f8;padding:7px 9px;font-size:12px;}
+QLineEdit:focus{border:1px solid #10b981;}
+QPushButton#ab{background:rgba(16,185,129,0.1);color:#10b981;border:1px solid #1a3a50;border-radius:6px;padding:8px 10px;font-size:11px;font-weight:700;}
+QPushButton#ab:hover{background:rgba(16,185,129,0.2);border-color:#10b981;}
+QPushButton#arb{background:rgba(220,38,38,0.1);color:#ef4444;border:1px solid #3a1a1a;border-radius:6px;padding:8px 10px;font-size:11px;font-weight:700;}
+QPushButton#arb:hover{background:rgba(220,38,38,0.25);border-color:#ef4444;}
+QPushButton#ayb{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7c3aed,stop:1 #5b21b6);color:white;border:none;border-radius:6px;padding:8px 14px;font-size:11px;font-weight:700;}
+QTableWidget{background:#060f1a;color:#d8e8f8;border:1px solid #1e3a5f;border-radius:6px;gridline-color:#12233a;font-size:11px;}
+QHeaderView::section{background:#0a1628;color:#4a6a8a;border:none;border-bottom:1px solid #1e3a5f;padding:5px;font-size:10px;font-weight:700;}
+QComboBox{background:#060f1a;border:1px solid #1e3a5f;border-radius:6px;color:#d8e8f8;padding:6px 9px;font-size:11px;}
+QComboBox QAbstractItemView{background:#0a1628;color:#d8e8f8;selection-background-color:#1e3a5f;}
+"""
+
+def admin_istek(token, yol, govde=None):
+    """Admin API cagrisi. (ok, data) doner."""
+    import urllib.request as ur, urllib.error as ue
+    h = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (token or '')}
+    veri = json.dumps(govde).encode() if govde is not None else None
+    req = ur.Request(CF_API + yol, data=veri, headers=h, method='POST' if govde is not None else 'GET')
+    try:
+        with ur.urlopen(req, timeout=15) as r:
+            return True, json.loads(r.read())
+    except ue.HTTPError as e:
+        try: return False, json.loads(e.read())
+        except Exception: return False, {'hata': 'HTTP %d' % e.code}
+    except Exception as ex:
+        return False, {'hata': str(ex)[:80]}
+
+def _ts(ms):
+    try: return QDateTime.fromMSecsSinceEpoch(int(ms)).toString('dd.MM HH:mm')
+    except Exception: return str(ms)
+
+class AdminPanel(QDialog):
+    """Admin mudahale paneli: anomali loglari + hesap mudahale aksiyonlari."""
+    def __init__(self, token, log_cb=None, parent=None):
+        super().__init__(parent)
+        self.token = token
+        self.log_cb = log_cb or (lambda m: None)
+        self.setWindowTitle('🛡️ Admin Paneli')
+        self.resize(880, 660)
+        self.setStyleSheet(ADMIN_CSS)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(8)
+        root.addWidget(QLabel('🛡️ Admin Müdahale Paneli', objectName='pt'))
+        root.addWidget(QLabel('Şüpheli hareketler (anomali log) ve hesap müdahale araçları. Log satırına çift tıklayınca oyuncu adı dolar.', objectName='ps'))
+        self.tablo = QTableWidget(0, 4)
+        self.tablo.setHorizontalHeaderLabels(['Zaman', 'Oyuncu', 'Tür', 'Detay'])
+        self.tablo.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.tablo.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.tablo.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tablo.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tablo.verticalHeader().setVisible(False)
+        self.tablo.setFixedHeight(250)
+        self.tablo.doubleClicked.connect(self._satir_sec)
+        root.addWidget(self.tablo)
+        ust = QHBoxLayout()
+        by = QPushButton('🔄 Logları Yenile', objectName='ayb')
+        by.clicked.connect(self.loglari_yukle)
+        ust.addWidget(by)
+        ust.addStretch()
+        root.addLayout(ust)
+        root.addWidget(QLabel('— Hesap Müdahalesi —', objectName='pt'))
+        self._ui_ekle(root)
+        self.durum = QLabel('', objectName='ps')
+        root.addWidget(self.durum)
+        self.loglari_yukle()
+
+    def _ui_ekle(self, root):
+        sat1 = QHBoxLayout()
+        sat1.addWidget(QLabel('Oyuncu:', objectName='ps'))
+        self.inp_kadi = QLineEdit(placeholderText='kullanıcı adı')
+        self.inp_kadi.setFixedWidth(160)
+        sat1.addWidget(self.inp_kadi)
+        b1 = QPushButton('❄️ Dondur', objectName='arb'); b1.clicked.connect(lambda: self.aksiyon('dondur'))
+        b2 = QPushButton('▶️ Serbest Bırak', objectName='ab'); b2.clicked.connect(lambda: self.aksiyon('serbest'))
+        b3 = QPushButton('♻️ Sıfırla', objectName='arb'); b3.clicked.connect(lambda: self.aksiyon('sifirla'))
+        b4 = QPushButton('🗑️ Hesabı Sil', objectName='arb'); b4.clicked.connect(lambda: self.aksiyon('kullanici_sil'))
+        for b in (b1, b2, b3, b4): sat1.addWidget(b)
+        sat1.addStretch()
+        root.addLayout(sat1)
+        sat2 = QHBoxLayout()
+        sat2.addWidget(QLabel('Klan:', objectName='ps'))
+        self.inp_klan = QLineEdit(placeholderText='klan adı')
+        self.inp_klan.setFixedWidth(160)
+        sat2.addWidget(self.inp_klan)
+        b5 = QPushButton('🏳️ Klanı Sil', objectName='arb'); b5.clicked.connect(self.klan_sil)
+        sat2.addWidget(b5)
+        sat2.addStretch()
+        root.addLayout(sat2)
+        sat3 = QHBoxLayout()
+        sat3.addWidget(QLabel('Kayıt Geçmişi:', objectName='ps'))
+        self.cmb_gecmis = QComboBox()
+        self.cmb_gecmis.setMinimumWidth(340)
+        sat3.addWidget(self.cmb_gecmis)
+        b6 = QPushButton('📜 Geçmişi Getir', objectName='ab'); b6.clicked.connect(self.gecmis_getir)
+        b7 = QPushButton('⏪ Bu Kayda Geri Al', objectName='ayb'); b7.clicked.connect(self.geri_al)
+        sat3.addWidget(b6); sat3.addWidget(b7)
+        sat3.addStretch()
+        root.addLayout(sat3)
+        sat4 = QHBoxLayout()
+        sat4.addWidget(QLabel('Editle → Para:', objectName='ps'))
+        self.inp_money = QLineEdit(placeholderText='boş = dokunma')
+        self.inp_money.setFixedWidth(140)
+        sat4.addWidget(self.inp_money)
+        sat4.addWidget(QLabel('Elmas:', objectName='ps'))
+        self.inp_elmas = QLineEdit(placeholderText='boş = dokunma')
+        self.inp_elmas.setFixedWidth(110)
+        sat4.addWidget(self.inp_elmas)
+        sat4.addWidget(QLabel('Gün:', objectName='ps'))
+        self.inp_day = QLineEdit(placeholderText='boş = dokunma')
+        self.inp_day.setFixedWidth(70)
+        sat4.addWidget(self.inp_day)
+        b8 = QPushButton('💾 Kaydet', objectName='ayb'); b8.clicked.connect(self.edit_kaydet)
+        sat4.addWidget(b8)
+        sat4.addStretch()
+        root.addLayout(sat4)
+
+    def _satir_sec(self, index):
+        kadi = self.tablo.item(index.row(), 1)
+        if kadi: self.inp_kadi.setText(kadi.text())
+
+    def _durum(self, m):
+        self.durum.setText(m)
+        self.log_cb(m)
+
+    def loglari_yukle(self):
+        ok, d = admin_istek(self.token, '/admin/anomaliler?limit=150')
+        if not ok:
+            self._durum('⛔ ' + d.get('hata', 'Loglar alınamadı')); return
+        rows = d.get('anomaliler', [])
+        self.tablo.setRowCount(len(rows))
+        renk = QColor('#ef4444')
+        for i, r in enumerate(rows):
+            tur = str(r.get('tur', ''))
+            madde = [QTableWidgetItem(_ts(r.get('zaman', 0))), QTableWidgetItem(str(r.get('kadi', ''))),
+                     QTableWidgetItem(tur), QTableWidgetItem(str(r.get('detay', '')))]
+            if tur in ('para_sicramasi', 'elmas_sicramasi', 'limit_asimi', 'gecersiz_deger', 'gun_geri_gitti'):
+                madde[2].setForeground(renk)
+            for j, it in enumerate(madde): self.tablo.setItem(i, j, it)
+        self._durum('✅ %d anomali kaydı yüklendi' % len(rows))
+
+    def aksiyon(self, ad):
+        kadi = self.inp_kadi.text().strip()
+        if not kadi: self._durum('⚠️ Önce oyuncu adı girin'); return
+        soru = {'dondur': 'dondurulsun', 'serbest': 'serbest bırakılsın', 'sifirla': 'oyun kaydı SIFIRLANSIN', 'kullanici_sil': 'TAMAMEN SİLİNSİN'}.get(ad, ad)
+        if QMessageBox.question(self, 'Onay', '%s → %s mi?' % (kadi, soru)) != QMessageBox.StandardButton.Yes: return
+        ok, d = admin_istek(self.token, '/admin/aksiyon', {'aksiyon': ad, 'kadi': kadi})
+        self._durum(('✅ ' + d.get('mesaj', '')) if ok else ('⛔ ' + d.get('hata', 'İşlem başarısız')))
+        self.loglari_yukle()
+
+    def klan_sil(self):
+        kl = self.inp_klan.text().strip()
+        if not kl: self._durum('⚠️ Klan adı girin'); return
+        if QMessageBox.question(self, 'Onay', 'Klan "%s" ve tüm üyelikleri silinsin mi?' % kl) != QMessageBox.StandardButton.Yes: return
+        ok, d = admin_istek(self.token, '/admin/aksiyon', {'aksiyon': 'klan_sil', 'klan': kl})
+        self._durum(('✅ ' + d.get('mesaj', '')) if ok else ('⛔ ' + d.get('hata', 'İşlem başarısız')))
+
+    def gecmis_getir(self):
+        kadi = self.inp_kadi.text().strip()
+        if not kadi: self._durum('⚠️ Önce oyuncu adı girin'); return
+        ok, d = admin_istek(self.token, '/admin/gecmis?kadi=' + kadi)
+        if not ok: self._durum('⛔ ' + d.get('hata', 'Geçmiş alınamadı')); return
+        self.cmb_gecmis.clear()
+        for r in d.get('gecmis', []):
+            etiket = '%s | para=%s elmas=%s gün=%s' % (_ts(r.get('zaman', 0)), r.get('money'), r.get('elmas'), r.get('day'))
+            self.cmb_gecmis.addItem(etiket, r.get('id'))
+        self._durum('✅ %d kayıt bulundu — listeden seçip "Geri Al"e bas' % self.cmb_gecmis.count())
+
+    def geri_al(self):
+        kadi = self.inp_kadi.text().strip()
+        gid = self.cmb_gecmis.currentData()
+        if not gid: self._durum('⚠️ Önce geçmişi getirin ve kayıt seçin'); return
+        if QMessageBox.question(self, 'Onay', '%s oyuncusu seçilen kayda geri alınsın mı?' % kadi) != QMessageBox.StandardButton.Yes: return
+        ok, d = admin_istek(self.token, '/admin/aksiyon', {'aksiyon': 'geri_al', 'kadi': kadi, 'gecmisId': gid})
+        self._durum(('✅ ' + d.get('mesaj', '')) if ok else ('⛔ ' + d.get('hata', 'İşlem başarısız')))
+
+    def edit_kaydet(self):
+        kadi = self.inp_kadi.text().strip()
+        if not kadi: self._durum('⚠️ Önce oyuncu adı girin'); return
+        govde = {'aksiyon': 'edit', 'kadi': kadi}
+        try:
+            if self.inp_money.text().strip(): govde['money'] = float(self.inp_money.text().strip())
+            if self.inp_elmas.text().strip(): govde['elmas'] = float(self.inp_elmas.text().strip())
+            if self.inp_day.text().strip(): govde['day'] = float(self.inp_day.text().strip())
+        except ValueError:
+            self._durum('⚠️ Sayısal değer girin'); return
+        ok, d = admin_istek(self.token, '/admin/aksiyon', govde)
+        self._durum(('✅ ' + d.get('mesaj', '')) if ok else ('⛔ ' + d.get('hata', 'İşlem başarısız')))
+
 class MainWidget(QWidget):
     def __init__(self, profile=None):
         super().__init__()
@@ -188,6 +382,9 @@ class MainWidget(QWidget):
         reb = QPushButton('🔄  Yenile',objectName='yb')
         reb.clicked.connect(self.yenile)
         sl.addWidget(reb)
+        adb = QPushButton('🛡️  Admin',objectName='yb')
+        adb.clicked.connect(self.admin_panel)
+        sl.addWidget(adb)
 
         # Hile input - Yenile'nin hemen altinda
         self.hile_inp = QLineEdit()
@@ -328,6 +525,15 @@ class MainWidget(QWidget):
             if hasattr(v, 'page'):
                 from PyQt6.QtWebEngineCore import QWebEnginePage
                 v.page().triggerAction(QWebEnginePage.WebAction.ReloadAndBypassCache)
+
+    def admin_panel(self):
+        token = getattr(self, 'pending_cf_token', '')
+        if not token:
+            QMessageBox.warning(self, 'Admin', 'Giris yapilmamis. Once oyuna giris yapin (otomatik giris aciksa launcher acilirken yapilir).')
+            return
+        self._admin_win = AdminPanel(token, log_cb=self.log, parent=self)
+        self._admin_win.show()
+        self.log('Admin paneli acildi')
 
     def log(self, msg):
         if hasattr(self, 'konsol'):

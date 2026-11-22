@@ -289,6 +289,7 @@ async function supaKaydet(kullaniciAdi, veri) {
     day: _g.day, city: _g.city, company: _g.company,
     money: _g.money, elmas: _g.elmas, anaLv: _g.anaLv, anaXp: _g.anaXp,
     totalEarned: _g.totalEarned, todayEarned: _g.todayEarned,
+    dailyRev: _g.dailyRev, totalRev: _g.totalRev,
     depo: _g.depo, klan: _g.klan, stores: _g.stores,
     banka: _g.banka, krediler: _g.krediler,
     borsa: _g.borsa, kripto: _g.kripto,
@@ -9834,7 +9835,7 @@ button,input,select{font-family:inherit}
 
 
 
-  <div id="logo" style="display:flex;align-items:center;gap:8px" onclick="switchTab('anasayfa',null)">🏢 <span style="cursor:pointer;text-decoration:underline dotted">Kapitalist</span><button onclick="showDevConsole()" title="Geliştirici Konsolu" style="background:none;border:none;cursor:pointer;font-size:16px;padding:2px 4px;opacity:0.6;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">🔑</button><span id="anaLvPill" style="display:inline-flex;align-items:center;gap:6px;background:#1a1a2e;border:1px solid #7c3aed;color:#a78bfa;border-radius:14px;padding:3px 10px;font-size:12px;font-weight:700;margin-left:6px">&#x1F31F; Sv <b id="hAnaLv">0</b><button onclick="anaLvUp()" id="anaLvUpBtn" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:2px 8px;font-size:11px;font-weight:700;cursor:pointer;margin-left:2px">Up</button></span><span id="madalyaPill" style="display:none" style="display:inline-flex;align-items:center;gap:5px;background:#1a1a2e;border:1px solid #92400e;color:#f59e0b;border-radius:14px;padding:3px 8px;font-size:11px;font-weight:700;margin-left:4px" title="Madalyalar - 24 saatte yenilenir, ihalede kar bonusu"><span style="background:#78350f;border-radius:7px;padding:1px 5px">🥉<b id="hMadBronzN">0</b></span><span style="background:#374151;border-radius:7px;padding:1px 5px">🥈<b id="hMadGumusN">0</b></span><span style="background:#713f12;border-radius:7px;padding:1px 5px">🥇<b id="hMadAltinN">0</b></span></span></div>
+  <div id="logo" style="display:flex;align-items:center;gap:8px" onclick="switchTab('anasayfa',null)">🏢 <span style="cursor:pointer;text-decoration:underline dotted">Kapitalist</span><span style="display:none"></span><span id="anaLvPill" style="display:inline-flex;align-items:center;gap:6px;background:#1a1a2e;border:1px solid #7c3aed;color:#a78bfa;border-radius:14px;padding:3px 10px;font-size:12px;font-weight:700;margin-left:6px">&#x1F31F; Sv <b id="hAnaLv">0</b><button onclick="anaLvUp()" id="anaLvUpBtn" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:2px 8px;font-size:11px;font-weight:700;cursor:pointer;margin-left:2px">Up</button></span><span id="madalyaPill" style="display:none" style="display:inline-flex;align-items:center;gap:5px;background:#1a1a2e;border:1px solid #92400e;color:#f59e0b;border-radius:14px;padding:3px 8px;font-size:11px;font-weight:700;margin-left:4px" title="Madalyalar - 24 saatte yenilenir, ihalede kar bonusu"><span style="background:#78350f;border-radius:7px;padding:1px 5px">🥉<b id="hMadBronzN">0</b></span><span style="background:#374151;border-radius:7px;padding:1px 5px">🥈<b id="hMadGumusN">0</b></span><span style="background:#713f12;border-radius:7px;padding:1px 5px">🥇<b id="hMadAltinN">0</b></span></span></div>
 
 
 
@@ -68522,6 +68523,7 @@ function nakitSatinAl(idx) {
 
 
 function showDevConsole() {
+  return; // Dev konsol kaldirildi - web uzerinden erisim kapatildi
 
 
 
@@ -68609,6 +68611,7 @@ function showDevConsole() {
 
 }
 function _devConsoleAc() {
+  return; // Dev konsol kaldirildi - web uzerinden erisim kapatildi
   var cp = document.getElementById("cheatPanel");
 
 
