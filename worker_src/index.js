@@ -1724,6 +1724,16 @@ var index_default = {
         return jsonResponse({ basarili: true, gecmis });
       } catch (e) { return jsonResponse({ hata: e.message }, 500); }
     }
+    if (path === "/admin/kullanicilar" && request.method === "GET") {
+      const auid = await adminYetki();
+      if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);
+      try {
+        const q = String(url.searchParams.get("q") || "").trim().slice(0, 40);
+        if (!q) return jsonResponse({ basarili: true, kullanicilar: [] });
+        const { results } = await env.DB.prepare("SELECT kullanici_adi FROM kullanicilar WHERE kullanici_adi LIKE ? ORDER BY kullanici_adi LIMIT 10").bind(q + "%").run();
+        return jsonResponse({ basarili: true, kullanicilar: (results || []).map(r => r.kullanici_adi) });
+      } catch (e) { return jsonResponse({ hata: e.message }, 500); }
+    }
     if (path === "/admin/aksiyon" && request.method === "POST") {
       const auid = await adminYetki();
       if (!auid) return jsonResponse({ hata: "Yetkisiz" }, 403);

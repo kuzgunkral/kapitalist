@@ -1,9 +1,9 @@
-﻿import sys, os, json, base64, shutil, subprocess, urllib.request
+﻿import sys, os, json, base64, shutil, subprocess, urllib.request, urllib.parse, threading
 from datetime import datetime
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QTabWidget, QLineEdit, QCheckBox, QMessageBox, QStackedWidget, QSplitter, QTextEdit, QDialog, QTableWidget, QTableWidgetItem, QComboBox, QHeaderView, QAbstractItemView)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QTabWidget, QLineEdit, QCheckBox, QMessageBox, QStackedWidget, QSplitter, QTextEdit, QDialog, QTableWidget, QTableWidgetItem, QComboBox, QHeaderView, QAbstractItemView, QCompleter)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
-from PyQt6.QtCore import QUrl, Qt, pyqtSignal, QDateTime
+from PyQt6.QtCore import QUrl, Qt, pyqtSignal, QDateTime, QTimer, QStringListModel
 from PyQt6.QtGui import QFont, QColor
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -227,8 +227,22 @@ class AdminPanel(QDialog):
     def _ui_ekle(self, root):
         sat1 = QHBoxLayout()
         sat1.addWidget(QLabel('Oyuncu:', objectName='ps'))
-        self.inp_kadi = QLineEdit(placeholderText='kullanıcı adı')
+        self.inp_kadi = QComboBox()
+        self.inp_kadi.setEditable(True)
         self.inp_kadi.setFixedWidth(160)
+        self.inp_kadi.lineEdit().setPlaceholderText('kullanıcı adı')
+        self.inp_kadi.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._oneri_model = QStringListModel()
+        self._oneri = QCompleter(self._oneri_model, self)
+        self._oneri.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._oneri.setFilterMode(Qt.MatchFlag.MatchStartsWith)
+        self._oneri.activated.connect(lambda t: self.inp_kadi.setCurrentText(t))
+        self.inp_kadi.lineEdit().setCompleter(self._oneri)
+        self._arama_zaman = QTimer(self)
+        self._arama_zaman.setSingleShot(True)
+        self._arama_zaman.setInterval(280)
+        self._arama_zaman.timeout.connect(self._oyuncu_ara)
+        self.inp_kadi.lineEdit().textEdited.connect(lambda _: self._arama_zaman.start())
         sat1.addWidget(self.inp_kadi)
         b1 = QPushButton('❄️ Dondur', objectName='arb'); b1.clicked.connect(lambda: self.aksiyon('dondur'))
         b2 = QPushButton('▶️ Serbest Bırak', objectName='ab'); b2.clicked.connect(lambda: self.aksiyon('serbest'))
@@ -274,9 +288,22 @@ class AdminPanel(QDialog):
         sat4.addStretch()
         root.addLayout(sat4)
 
+    def _oyuncu_ara(self):
+        q = self.inp_kadi.currentText().strip()
+        if len(q) < 1:
+            self._oneri_model.setStringList([]); return
+        def _uygula():
+            ok, d = admin_istek(self.token, '/admin/kullanicilar?q=' + urllib.parse.quote(q))
+            if ok and d.get('kullanicilar') is not None:
+                liste = d.get('kullanicilar', [])
+                self._oneri_model.setStringList(liste)
+                if liste:
+                    self._oneri.complete()
+        threading.Thread(target=_uygula, daemon=True).start()
+
     def _satir_sec(self, index):
         kadi = self.tablo.item(index.row(), 1)
-        if kadi: self.inp_kadi.setText(kadi.text())
+        if kadi: self.inp_kadi.setCurrentText(kadi.text())
 
     def _durum(self, m):
         self.durum.setText(m)
@@ -299,7 +326,7 @@ class AdminPanel(QDialog):
         self._durum('✅ %d anomali kaydı yüklendi' % len(rows))
 
     def aksiyon(self, ad):
-        kadi = self.inp_kadi.text().strip()
+        kadi = self.inp_kadi.currentText().strip()
         if not kadi: self._durum('⚠️ Önce oyuncu adı girin'); return
         soru = {'dondur': 'dondurulsun', 'serbest': 'serbest bırakılsın', 'sifirla': 'oyun kaydı SIFIRLANSIN', 'kullanici_sil': 'TAMAMEN SİLİNSİN'}.get(ad, ad)
         if QMessageBox.question(self, 'Onay', '%s → %s mi?' % (kadi, soru)) != QMessageBox.StandardButton.Yes: return
@@ -315,7 +342,7 @@ class AdminPanel(QDialog):
         self._durum(('✅ ' + d.get('mesaj', '')) if ok else ('⛔ ' + d.get('hata', 'İşlem başarısız')))
 
     def gecmis_getir(self):
-        kadi = self.inp_kadi.text().strip()
+        kadi = self.inp_kadi.currentText().strip()
         if not kadi: self._durum('⚠️ Önce oyuncu adı girin'); return
         ok, d = admin_istek(self.token, '/admin/gecmis?kadi=' + kadi)
         if not ok: self._durum('⛔ ' + d.get('hata', 'Geçmiş alınamadı')); return
@@ -326,7 +353,7 @@ class AdminPanel(QDialog):
         self._durum('✅ %d kayıt bulundu — listeden seçip "Geri Al"e bas' % self.cmb_gecmis.count())
 
     def geri_al(self):
-        kadi = self.inp_kadi.text().strip()
+        kadi = self.inp_kadi.currentText().strip()
         gid = self.cmb_gecmis.currentData()
         if not gid: self._durum('⚠️ Önce geçmişi getirin ve kayıt seçin'); return
         if QMessageBox.question(self, 'Onay', '%s oyuncusu seçilen kayda geri alınsın mı?' % kadi) != QMessageBox.StandardButton.Yes: return
@@ -334,7 +361,7 @@ class AdminPanel(QDialog):
         self._durum(('✅ ' + d.get('mesaj', '')) if ok else ('⛔ ' + d.get('hata', 'İşlem başarısız')))
 
     def edit_kaydet(self):
-        kadi = self.inp_kadi.text().strip()
+        kadi = self.inp_kadi.currentText().strip()
         if not kadi: self._durum('⚠️ Önce oyuncu adı girin'); return
         govde = {'aksiyon': 'edit', 'kadi': kadi}
         try:
