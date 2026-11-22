@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="tr">
 
 
@@ -18591,18 +18591,8 @@ function sohbetYukle(){
         d.style.paddingLeft="5px";
       }
       d.innerHTML="<span style='color:"+renk+";font-weight:700'>"+m.kullanici_adi+"</span> <span style='color:#4a7090;font-size:11px'>"+t+"</span> <span style='color:#cbd5e1'>"+m.mesaj+"</span>"+(_bahsedildi?" <span style='font-size:9px;color:#f59e0b'>@ sen</span>":"");
-      // Yeni gelen mesajda adimdan bahsedildiyse PM baloncuğuyla bildir
-      if(_bahsedildi){
-        var _mz=m.zaman||Date.now();
-        if(window._gSonGorZaman!==undefined&&_mz>window._gSonGorZaman){
-          var _key='g_'+m.id;
-          window._gMentionGorulen=window._gMentionGorulen||{};
-          if(!window._gMentionGorulen[_key]){
-            window._gMentionGorulen[_key]=1;
-            pmBekleyenEkle(m.kullanici_adi,m.mesaj,_key);
-          }
-        }
-      }
+      // Not: sohbet adindan bahsedince PM balonu uretme ozelligi kaldirildi (sahte PM bildirimi).
+      // Sadece gorsel vurgu (highlight) kalir.
       if(m.zaman&&(window._gSonGorZaman===undefined||m.zaman>window._gSonGorZaman))window._gSonGorZaman=m.zaman;
       if(_gSeciliMesajlar.indexOf(m.id)>=0)d.style.background="rgba(30,58,95,0.6)";
       d.onclick=function(){window._gHedefKadi=m.kullanici_adi;var i=_gSeciliMesajlar.indexOf(m.id);if(i>=0){_gSeciliMesajlar.splice(i,1);this.style.background="";}else{_gSeciliMesajlar.push(m.id);this.style.background="rgba(30,58,95,0.6)";}if(_gYetki.admin)gMuteListeGetir(gMuteBtnGuncelle);};
@@ -19051,7 +19041,13 @@ setInterval(function(){
   if(!tok) return;
   fetch(CF_API+'/online-ping',{method:'POST',headers:{'Authorization':'Bearer '+tok}})
     .then(function(r){return r.json();})
-    .then(function(d){ if(d&&d.online){ window._gOnlineListe=d.online; if(document.getElementById('ana-online')) gOnlineRender(d.online); } })
+    .then(function(d){ if(d&&d.ban===1){ // Hesap dondurulmus: anlik cikis
+    try{ localStorage.removeItem('cf_token'); localStorage.removeItem('cf_user'); localStorage.removeItem('cf_kullanici'); }catch(_e){}
+    window._cfToken=null; window._currentUser=null; window._supaUser=null;
+    alert('Hesabiniz yonetici tarafindan dondurulmus. Oyundan cikariliyorsunuz.');
+    location.reload(); return;
+  }
+  if(d&&d.online){ window._gOnlineListe=d.online; if(document.getElementById('ana-online')) gOnlineRender(d.online); } })
     .catch(function(){});
   klDavetSenk();
 }, 60000);
@@ -90705,7 +90701,15 @@ function loadUserGame(username) {
 
 
 
-    } catch(e) {}
+    } catch(e) {
+      // Yukleme sirasinda hata olursa: kayit yuklendiyse oyunu yine de ac, hatayi goster
+      try { console.error('loadUserGame hatasi:', e); } catch(_e1) {}
+      if (G && G.started) { try { openGame(); } catch(_e3) {} }
+      try {
+        var _eb = document.getElementById('loginErr');
+        if (_eb && !window._gameOpen) { _eb.style.color = '#f59e0b'; _eb.textContent = 'Yukleme uyarisi: ' + (e && e.message ? e.message : e); }
+      } catch(_e2) {}
+    }
 
 
 
@@ -90873,7 +90877,7 @@ function loadUserGame(username) {
 
 
 
-  if (!window._gameOpen) {
+  if (!window._gameOpen && !(G && G.started)) {
 
 
 
@@ -93212,9 +93216,7 @@ function startGame() {
 
 function openGame() {
   // Oyuncu adını Supabase user metadata'dan set et (her açılışta override)
-  if(window._currentUser) {
-    G._oyuncuAdi = window._supaUser.user_metadata.kullanici_adi;
-  }
+  G._oyuncuAdi = (window._supaUser && window._supaUser.user_metadata && window._supaUser.user_metadata.kullanici_adi) || window._currentUser || G._oyuncuAdi || '';
 
 
 

@@ -171,7 +171,7 @@ async function karsilamaMaili(env, email, kullaniciAdi) {
   if (!env.BREVO_API_KEY) return;
   try {
     let fromEmail = env.BREVO_FROM || null;
-    let fromName = env.BREVO_FROM_NAME || "KuZGuN Ticaret";
+    let fromName = env.BREVO_FROM_NAME || "Kapitalist Oyunu";
     if (!fromEmail) {
       const sr = await fetch("https://api.brevo.com/v3/senders", {
         headers: { "api-key": env.BREVO_API_KEY, "accept": "application/json" }
@@ -187,15 +187,15 @@ async function karsilamaMaili(env, email, kullaniciAdi) {
     }
     if (!fromEmail) return;
     const html = `<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;background:#141413;color:#f5f4ed;border-radius:12px">
-                  <h1 style="color:#e8b64c;text-align:center">\u{1F4B0} KuZGuN Ticaret</h1>
+                  <h1 style="color:#e8b64c;text-align:center">\u{1F4B0} Kapitalist Oyunu</h1>
                   <p>Merhaba <b>${kullaniciAdi}</b>,</p>
-                  <p>KuZGuN Ticaret'e ho\u015F geldin! Hesab\u0131n ba\u015Far\u0131yla olu\u015Fturuldu.</p>
+                  <p>Kapitalist Oyunu'na ho\u015F geldin! Hesab\u0131n ba\u015Far\u0131yla olu\u015Fturuldu.</p>
                   <div style="background:#262624;border-radius:8px;padding:16px;margin:16px 0">
                     <p style="margin:4px 0"><b>Kullan\u0131c\u0131 Ad\u0131:</b> ${kullaniciAdi}</p>
                     <p style="margin:4px 0"><b>E-posta:</b> ${email}</p>
                   </div>
-                  <p>Hemen oyna: <a href="https://kuzgunkral.github.io/kapitalist/" style="color:#e8b64c">KuZGuN Ticaret</a></p>
-                  <p style="color:#8b8b85;font-size:12px;margin-top:20px">KuZGuN Ticaret Ekibi</p>
+                  <p>Hemen oyna: <a href="https://kuzgunkral.github.io/kapitalist/" style="color:#e8b64c">Kapitalist Oyunu</a></p>
+                  <p style="color:#8b8b85;font-size:12px;margin-top:20px">Kapitalist Oyunu Ekibi</p>
                 </div>`;
     const mr = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
@@ -207,7 +207,7 @@ async function karsilamaMaili(env, email, kullaniciAdi) {
       body: JSON.stringify({
         sender: { name: fromName, email: fromEmail },
         to: [{ email: email, name: kullaniciAdi }],
-        subject: "KuZGuN Ticaret - Hesabin Hazir! \u{1F4B0}",
+        subject: "Kapitalist Oyunu - Hesabin Hazir! \u{1F4B0}",
         htmlContent: html
       })
     });
@@ -288,6 +288,11 @@ var index_default = {
         await env.DB.prepare(
           "INSERT INTO oturumlar (token,kullanici_id,son_kullanim) VALUES (?,?,?)"
         ).bind(token, k.id, Date.now() + 7 * 24 * 60 * 60 * 1e3).run();
+        // Giris de "son aktif" sayilir: admin panelde '—' yerine tarih gorunsun
+        try {
+          await ekTablolar(env);
+          await env.DB.prepare("INSERT INTO online_durum (kullanici_adi,son_aktif) VALUES (?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET son_aktif=excluded.son_aktif").bind(k.kullanici_adi, Date.now()).run();
+        } catch (oaErr) {}
         return jsonResponse({ basarili: true, token, kullanici_adi: k.kullanici_adi, uid: k.id });
       } catch (e) {
         return jsonResponse({ hata: "Giris hatasi: " + e.message }, 500);
@@ -711,7 +716,8 @@ var index_default = {
         await env.DB.prepare("DELETE FROM online_durum WHERE son_aktif<?").bind(Date.now() - 600000).run();
         await env.DB.prepare("INSERT INTO online_durum (kullanici_adi,son_aktif) VALUES (?,?) ON CONFLICT(kullanici_adi) DO UPDATE SET son_aktif=excluded.son_aktif").bind(k.kullanici_adi, Date.now()).run();
         const o = await env.DB.prepare("SELECT kullanici_adi FROM online_durum WHERE son_aktif>? ORDER BY son_aktif DESC LIMIT 50").bind(Date.now() - 120000).all();
-        return jsonResponse({ online: (o.results || []).map(function(x){ return x.kullanici_adi; }) });
+        const _pm = await modGet(env, k.kullanici_adi);
+        return jsonResponse({ online: (o.results || []).map(function(x){ return x.kullanici_adi; }), ban: _pm.ban === 1 ? 1 : 0 });
       } catch (e) {
         return jsonResponse({ online: [], hata: e.message }, 500);
       }
@@ -1915,8 +1921,18 @@ var index_default = {
           return jsonResponse({ basarili: true, mesaj: kadiGuv + " kaydi geri alindi" });
         }
         if (aksiyon === "edit") {
-          const cur = await env.DB.prepare("SELECT veri,surum FROM oyun_kayitlari WHERE kullanici_id=? ORDER BY guncellendi DESC LIMIT 1").bind(u.id).first();
-          if (!cur) return jsonResponse({ hata: "Oyun kaydi yok" }, 404);
+          let cur = await env.DB.prepare("SELECT veri,surum FROM oyun_kayitlari WHERE kullanici_id=? ORDER BY guncellendi DESC LIMIT 1").bind(u.id).first();
+          if (!cur) {
+            // Kayit hic yoksa (sifirlanmis/yeni oyuncu): minimal kayit olustur, edit artik calisir
+            const surum = "v1";
+            const varsayilan = { started: true, company: "Sirket", city: "Istanbul", money: 0, elmas: 0, day: 1 };
+            if (typeof money === "number" && isFinite(money) && money >= 0) varsayilan.money = money;
+            if (typeof elmas === "number" && isFinite(elmas) && elmas >= 0) varsayilan.elmas = elmas;
+            if (typeof day === "number" && isFinite(day) && day >= 1) varsayilan.day = day;
+            await env.DB.prepare("INSERT INTO oyun_kayitlari (kullanici_id,surum,veri,olusturuldu,guncellendi) VALUES (?,?,?,?,?)").bind(u.id, surum, JSON.stringify(varsayilan), Date.now(), Date.now()).run();
+            await adminLog(auid, kadiGuv, "admin_editle", "yeni kayit olusturuldu: money=" + varsayilan.money + " elmas=" + varsayilan.elmas + " day=" + varsayilan.day);
+            return jsonResponse({ basarili: true, mesaj: kadiGuv + " icin yeni kayit olusturuldu" });
+          }
           let v;
           try { v = JSON.parse(cur.veri); } catch (e) { return jsonResponse({ hata: "Kayit okunamadi" }, 500); }
           if (typeof money === "number" && isFinite(money) && money >= 0) v.money = money;

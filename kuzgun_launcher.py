@@ -1,6 +1,6 @@
 ﻿import sys, os, json, base64, shutil, subprocess, urllib.request, urllib.parse, threading
 from datetime import datetime
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QTabWidget, QLineEdit, QCheckBox, QMessageBox, QStackedWidget, QSplitter, QTextEdit, QDialog, QTableWidget, QTableWidgetItem, QComboBox, QHeaderView, QAbstractItemView, QCompleter)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QTabWidget, QLineEdit, QCheckBox, QMessageBox, QStackedWidget, QSplitter, QTextEdit, QDialog, QTableWidget, QTableWidgetItem, QComboBox, QHeaderView, QAbstractItemView, QCompleter, QPlainTextEdit, QFileDialog)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtCore import QUrl, Qt, pyqtSignal, QDateTime, QTimer, QStringListModel
@@ -607,6 +607,15 @@ class AdminPanel(QDialog):
         elif sec is a3: self.inp_kadi.setCurrentText(kadi)
         elif sec is a4: QApplication.clipboard().setText(kadi)
 
+    def _para_fmt(self, v):
+        # 15425.0000000054 gibi ucuşan değerleri 15.425,00 şeklinde göster
+        try:
+            f = float(v)
+            s = ('{:,.2f}'.format(f)).replace(',', 'X').replace('.', ',').replace('X', '.')
+            return s
+        except Exception:
+            return str(v)
+
     def _bilgi_karti(self, kadi):
         if not kadi: return
         self._durum('ℹ️ ' + kadi + ' bilgisi alınıyor...')
@@ -630,21 +639,66 @@ class AdminPanel(QDialog):
             satirlar += [
                 '',
                 '💾 Son Kayıt: sürüm=%s, güncelleme=%s' % (save.get('surum', '—'), _ts(save.get('guncellendi', 0))),
-                '💰 Para: %s | 💎 Elmas: %s | 📅 Gün: %s' % (save.get('money', '—'), save.get('elmas', '—'), save.get('day', '—')),
+                '💰 Para: %s | 💎 Elmas: %s | 📅 Gün: %s' % (self._para_fmt(save.get('money', 0)), self._para_fmt(save.get('elmas', 0)), save.get('day', '—')),
                 '🏙️ Şehir: %s | 🏢 İşyeri: %s' % (save.get('city', '—'), save.get('isyeri', '—')),
             ]
         else:
             satirlar += ['', '💾 Oyun kaydı yok (oyuna hiç girmemiş olabilir)']
         anom = b.get('anomaliler') or []
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle('Bilgi Kartı: ' + str(b.get('kadi', kadi)))
+        dlg.resize(560, 380)
+        v = QVBoxLayout(dlg)
+        txt = QPlainTextEdit()
+        txt.setReadOnly(True)
+        txt.setPlainText('\n'.join(satirlar))
+        v.addWidget(txt)
+        # Son anomaliler: açılır/kapanır bölüm
+        anom_ust = QWidget()
+        av = QVBoxLayout(anom_ust); av.setContentsMargins(0, 0, 0, 0)
+        baslik = '⚠️ Son anomaliler (%d) ▲' % len(anom) if anom else '⚠️ Son anomaliler (0) ▲'
+        btn_anom = QPushButton(baslik)
+        btn_anom.setCheckable(True)
+        btn_anom.setStyleSheet('text-align:left;')
+        anom_list = QPlainTextEdit()
+        anom_list.setReadOnly(True)
+        anom_list.setMaximumHeight(120)
         if anom:
-            satirlar += ['', '⚠️ Son anomaliler (%d):' % len(anom)]
+            anom_satir = []
             for a in anom[:10]:
-                satirlar.append('  • [%s] %s — %s' % (_ts(a.get('zaman', 0)), a.get('tur', ''), a.get('detay', '')))
-        mb = QMessageBox(self)
-        mb.setWindowTitle('Bilgi Kartı: ' + str(b.get('kadi', kadi)))
-        mb.setIcon(QMessageBox.Icon.Information)
-        mb.setText('\n'.join(satirlar))
-        mb.exec()
+                anom_satir.append('  • [%s] %s — %s' % (_ts(a.get('zaman', 0)), a.get('tur', ''), a.get('detay', '')))
+            anom_list.setPlainText('\n'.join(anom_satir))
+        else:
+            anom_list.setPlainText('  (anomali kaydı yok)')
+        anom_list.setVisible(False)
+        av.addWidget(btn_anom); av.addWidget(anom_list)
+        def _anom_degis(check):
+            anom_list.setVisible(check)
+            btn_anom.setText(('⚠️ Son anomaliler (%d) ▼' if check else '⚠️ Son anomaliler (%d) ▲') % len(anom))
+        btn_anom.toggled.connect(_anom_degis)
+        v.addWidget(anom_ust)
+        # Alt butonlar
+        hb = QHBoxLayout()
+        btn_aktar = QPushButton('📄 Dışa Aktar (txt)')
+        btn_kapat = QPushButton('Kapat')
+        hb.addWidget(btn_aktar); hb.addStretch(1); hb.addWidget(btn_kapat)
+        v.addLayout(hb)
+        def _disa_aktar():
+            yol, _f = QFileDialog.getSaveFileName(dlg, 'Bilgi Kartını Kaydet', kadi + '_bilgi.txt', 'Metin Dosyası (*.txt)')
+            if not yol: return
+            icerik = '\n'.join(satirlar) + '\n\n⚠️ Son anomaliler (%d):\n' % len(anom)
+            for a in anom[:10]:
+                icerik += '  • [%s] %s — %s\n' % (_ts(a.get('zaman', 0)), a.get('tur', ''), a.get('detay', ''))
+            try:
+                with open(yol, 'w', encoding='utf-8') as fh:
+                    fh.write(icerik)
+                self._durum('✅ Bilgi kartı kaydedildi: ' + yol)
+            except Exception as ex:
+                self._durum('⛔ Kaydedilemedi: ' + str(ex))
+        btn_aktar.clicked.connect(_disa_aktar)
+        btn_kapat.clicked.connect(dlg.accept)
+        dlg.exec()
         self._durum('✅ Bilgi kartı gösterildi: ' + kadi)
 
     def _satir_sec(self, index):
