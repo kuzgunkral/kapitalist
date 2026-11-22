@@ -6,8 +6,17 @@ from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtCore import QUrl, Qt, pyqtSignal, QDateTime, QTimer, QStringListModel
 from PyQt6.QtGui import QFont, QColor
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller onefile'da __file__ gecici temp klasorunu gosterir; orada olusan
+# .webdata/.oturum.json her acilista silinir (token + yerel kayit kaybi ->
+# oyun her acilista sirket/il secimine dusuyor). Donmus exe'de exe'nin klasoru
+# gecerlidir.
+if getattr(sys, 'frozen', False):
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CF_API = 'https://kapitalist-api.gitbaskabul.workers.dev'
+# Cloudflare error 1010: Python-urllib UA'sini blokluyor; tarayici UA sart.
+ISTEK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 OTURUM_FILE = os.path.join(SCRIPT_DIR, '.oturum.json')
 URLS = {'oyun':'https://kuzgunkral.github.io/kapitalist/','gmail':'https://mail.google.com/mail/u/0/#inbox','cloudflare':'https://dash.cloudflare.com','github':'https://github.com/kuzgunkral/kapitalist','worker':'https://kapitalist-api.gitbaskabul.workers.dev'}
 
@@ -16,7 +25,7 @@ def panel_admin_ol(token):
     if not token: return
     try:
         req = urllib.request.Request(CF_API+'/panel/admin-ol', data=b'{}',
-            headers={'Content-Type':'application/json','Authorization':'Bearer '+token}, method='POST')
+            headers={'Content-Type':'application/json','Authorization':'Bearer '+token,'User-Agent':ISTEK_UA}, method='POST')
         with urllib.request.urlopen(req, timeout=10) as r:
             json.loads(r.read())
     except Exception:
@@ -115,7 +124,7 @@ class LoginWidget(QWidget):
             import urllib.request as ur
             CF_API = 'https://kapitalist-api.gitbaskabul.workers.dev'
             payload = json.dumps({'kullanici_adi':u,'sifre':p}).encode()
-            req = ur.Request(CF_API+'/giris',data=payload,headers={'Content-Type':'application/json'},method='POST')
+            req = ur.Request(CF_API+'/giris',data=payload,headers={'Content-Type':'application/json','User-Agent':ISTEK_UA},method='POST')
             with ur.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read())
             if not data.get('token'):
@@ -172,7 +181,7 @@ QComboBox QAbstractItemView{background:#0a1628;color:#d8e8f8;selection-backgroun
 def admin_istek(token, yol, govde=None):
     """Admin API cagrisi. (ok, data) doner."""
     import urllib.request as ur, urllib.error as ue
-    h = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (token or '')}
+    h = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (token or ''), 'User-Agent': ISTEK_UA}
     veri = json.dumps(govde).encode() if govde is not None else None
     req = ur.Request(CF_API + yol, data=veri, headers=h, method='POST' if govde is not None else 'GET')
     try:
@@ -581,7 +590,7 @@ class MainWidget(QWidget):
                 return
             p = base64.b64decode(d['p_enc'].encode()).decode()
             payload = json.dumps({'kullanici_adi': d['u'], 'sifre': p}).encode()
-            req = urllib.request.Request(CF_API + '/giris', data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+            req = urllib.request.Request(CF_API + '/giris', data=payload, headers={'Content-Type': 'application/json', 'User-Agent': ISTEK_UA}, method='POST')
             with urllib.request.urlopen(req, timeout=10) as r:
                 data = json.loads(r.read())
             if data.get('token'):
@@ -675,7 +684,7 @@ class KuzgunLauncher(QMainWindow):
                     req = urllib.request.Request(
                         'https://kapitalist-api.gitbaskabul.workers.dev/giris',
                         data=payload,
-                        headers={'Content-Type':'application/json'},
+                        headers={'Content-Type':'application/json','User-Agent':ISTEK_UA},
                         method='POST'
                     )
                     with urllib.request.urlopen(req, timeout=10) as r:
