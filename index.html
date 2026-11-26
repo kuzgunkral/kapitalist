@@ -252,7 +252,8 @@ async function supaGirisYap(kullaniciAdi, sifre) {
   try {
     var r = await fetch(CF_API + '/giris', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({kullanici_adi:kullaniciAdi, sifre:sifre})});
     var d = await r.json();
-    if(d.hata) return {hata: d.hata};
+    if(d.hata) return {hata: d.hata, emailDogrulanmadi: !!d.emailDogrulanmadi};
+    if(!d.token) return {hata: d.mesaj || 'Giris basarisiz'};
     window._cfToken = d.token;
     window._currentUser = kullaniciAdi;
     window._supaUser = {id: d.uid, kullanici_adi: kullaniciAdi};
@@ -88828,8 +88829,12 @@ function loadUserGame(username) {
         } else {
           localStorage.setItem(key2, JSON.stringify(supaVeri));
         }
-        // _supaYuklendi false yapilmiyor - donguye girmesin
-        loadUserGame(username);
+        // Bulut verisi yuklenince oyunu ac
+        window._gameOpen = true;
+        var gw2 = document.getElementById('gameWrap'); if(gw2) gw2.style.display = 'block';
+        var lw2b = document.getElementById('loginWrap'); if(lw2b) lw2b.style.display = 'none';
+        var sw2b = document.getElementById('setupWrap'); if(sw2b) sw2b.style.display = 'none';
+        try { if(typeof openGame === 'function') openGame(); } catch(_eg) {}
       } else {
         // Bulutta kayit yok: YEREL KAYDI KORU - oyunu kapatma, setup'a dusme
         try {
@@ -88849,7 +88854,20 @@ function loadUserGame(username) {
         var lw = document.getElementById('loginWrap'); if(lw) lw.style.display = 'none';
         var sw = document.getElementById('setupWrap'); if(sw) sw.style.display = 'flex';
       }
-    }).catch(function(e){ console.warn('Supabase yükleme hatası:', e); });
+    }).catch(function(e){
+      console.warn('Supabase yükleme hatası:', e);
+      // FIX: bulut yukleme patlarsa setup'a dusme — yerel kayit varsa oyunu ac
+      try {
+        var _lr = localStorage.getItem(getSaveKey(username));
+        var _ld = _lr ? JSON.parse(_lr) : null;
+        if (_ld && _ld.started && !window._gameOpen) {
+          window._gameOpen = true;
+          var gw3 = document.getElementById('gameWrap'); if(gw3) gw3.style.display = 'block';
+          var lw3 = document.getElementById('loginWrap'); if(lw3) lw3.style.display = 'none';
+          var sw3 = document.getElementById('setupWrap'); if(sw3) sw3.style.display = 'none';
+        }
+      } catch(_e) {}
+    });
   }
 
 
@@ -92468,28 +92486,75 @@ function renderBanka3() {
 
 
 function logoutGame() {
-  // Once tum timerlari durdur
-  if(window._supaSaveTimer) { clearTimeout(window._supaSaveTimer); window._supaSaveTimer = null; }
+  // FIX: cikis yapinca kayitli oyunun kaybolmasi (setup'a dusme) engellendi.
+  // Eski akis: debounced bulut save timer'i iptal ediliyor + G.started=false
+  // yazilip kaydedilmeden reload -> bulut save hic tamamlanmiyor -> tekrar
+  // giriste /load null donup setup (sirket/sehir) ekranina dusuluyordu.
+
+  // 1) Save motorlarini kilitle, yerel kaydi GUNCEL durumla yaz
+  window._anlikSave = true; // debounce beklemeden buluta yazilsin
+  window._resetDevam = true; // yeni save tekmeleri (timer zinciri) engellensin
+  var key = window._currentUser ? getSaveKey(window._currentUser) : 'parp_v7';
+  // G.started'i TRUE birak — kayitli oyun means "devam et". false yazarsak
+  // sonraki giris sifirlama gibi davranir.
+  G.started = true;
+  G._sonSaveZamani = Date.now();
+  try { localStorage.setItem(key, JSON.stringify(G)); } catch(e) {}
+
+  // 2) Tum oyun timerlarini durdur (save fetch'i HARIC)
   if(typeof mktTimer !== 'undefined' && mktTimer) { clearInterval(mktTimer); mktTimer = null; }
   if(typeof custTimer !== 'undefined' && custTimer) { clearInterval(custTimer); custTimer = null; }
   if(typeof buyBotTimer !== 'undefined' && buyBotTimer) { clearInterval(buyBotTimer); buyBotTimer = null; }
-  // Oyundan cikista tum PM gecmisini (kendi tarafimdaki) sil — karsi taraf kendi silmedikce gorur
+
+  // 3) Buluta SENKRONIZE save — keepalive:true sayesinde reload sonrasi de tamamlanir
+  var _tok = getCFToken();
+  var _kadi = window._currentUser || '';
+  var _saveDone = false;
+  if(_tok && _kadi && typeof supaKaydet === 'function' && typeof G !== 'undefined'){
+    try {
+      // supaKaydet _resetDevam kilidine takilir; kilitli ozel versiyon:
+      var _saveData = (function(){
+        // supaKaydet'in gordugu sekilde ayni veriyi hazirla (kilit acikken)
+        var _rd = window._resetDevam; window._resetDevam = false;
+        var _r = null;
+        try { supaKaydet(_kadi, G); _r = true; } catch(e) {}
+        window._resetDevam = _rd;
+        return _r;
+      })();
+      _saveDone = _saveData === true;
+    } catch(e) {}
+  }
+  // Yedek: dogrudan fetch ile de gonder (keepalive ile reload'a dayanikli)
+  if(_tok && _kadi && typeof G !== 'undefined'){
+    try {
+      var _payload = (function(){
+        // supaKaydet ile ayni alan setini yansitmak yerine tam G'yi gonder:
+        // worker "/save" tum alanlari aynen yaziyor, fazladan alan sorun degil.
+        return JSON.stringify({kullanici_adi: _kadi, surum: 'v1', veri: G});
+      })();
+      fetch(CF_API+'/save', {method:'POST', keepalive:true,
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+_tok},
+        body: _payload}).catch(function(){});
+    } catch(e) {}
+  }
+
+  // 4) PM gecmisini temizle (kendi tarafimdaki)
   try{
-    var _lk=localStorage.getItem('cf_token')||'';
-    if(_lk&&window._currentUser){
-      fetch(CF_API+'/dm/temizle',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+_lk},body:JSON.stringify({tumu:true}),keepalive:true}).catch(function(){});
+    if(_tok&&window._currentUser){
+      fetch(CF_API+'/dm/temizle',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+_tok},body:JSON.stringify({tumu:true}),keepalive:true}).catch(function(){});
     }
   }catch(e){}
-  G.started = false;
+
+  // 5) Oturumu kapat ve reload — save fetch'leri keepalive ile devam eder
   window._gameOpen = false;
   window._currentUser = null;
   localStorage.removeItem(CURRENT_USER_KEY);
   // Topbar ve gameWrap gizle
   var _tb = document.getElementById('topbar'); if(_tb) _tb.style.display = 'none';
   var _gw = document.getElementById('gameWrap'); if(_gw) _gw.style.display = 'none';
-  // signOut -> sonra reload ile login ekranina git
   localStorage.removeItem("cf_token"); localStorage.removeItem("cf_user"); localStorage.removeItem("cf_kullanici"); location.reload();
 }
+// Eski logoutGame silindi — yukaridaki duzeltilmis versiyon kullaniliyor.
 
 
 
