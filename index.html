@@ -267,7 +267,7 @@ async function supaGirisYapCikis() {
   try { if(typeof save === 'function') save(); } catch(e) {}
   try { if(window._supaUser && typeof supaKaydet === 'function' && typeof G !== 'undefined') { await supaKaydet(window._currentUser, G); } } catch(e) {}
   localStorage.removeItem('cf_token'); localStorage.removeItem('cf_user');
-  stopOturumKanal(); window._supaUser = null; window._cfToken = null; window._currentUser = null;
+  stopOturumKanal(); window._supaUser = null; window._cfToken = null; window._currentUser = null; window._supaYuklendi = false;
 }
 
 // ---- OYUN KAYDET ----
