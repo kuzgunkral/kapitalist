@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="tr">
 
 
@@ -349,6 +349,15 @@ async function supaKaydetDelta(kullaniciAdi, delta) {
 
 // ---- OTURUM KONTROL (Cloudflare) ----
 (function() {
+  var urlParams = new URLSearchParams(window.location.search);
+  var urlToken = urlParams.get('cf_token');
+  var urlUser  = urlParams.get('cf_user');
+  if (urlToken && urlUser) {
+    localStorage.setItem('cf_token', urlToken);
+    localStorage.setItem('cf_user', urlUser);
+    localStorage.setItem('cf_kullanici', urlUser);
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
   var token = localStorage.getItem('cf_token');
   var uname = localStorage.getItem('cf_user') || localStorage.getItem('cf_kullanici');
   if(token && uname) {
@@ -88588,7 +88597,14 @@ function doLogin() {
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (btnLogin) { btnLogin.disabled = false; btnLogin.textContent = 'Giris Yap'; }
     if (d.hata) {
-      errEl.textContent = d.hata === 'Kullanici bulunamadi veya sifre yanlis.' ? 'Kullanici adi veya sifre yanlis!' : d.hata;
+      if (d.emailDogrulanmadi) {
+        errEl.style.color = '#f59e0b';
+        var girilen = document.getElementById('inpLoginUser') ? document.getElementById('inpLoginUser').value.trim() : '';
+        errEl.innerHTML = '\u{1F4E7} E-postanı doğrulamalısın. Kutuyu kontrol et.'
+          + ' <span onclick="dogrulamaTekrar(\'' + girilen + '\')" style="color:#e8b64c;cursor:pointer;text-decoration:underline">Yeni link gönder</span>';
+      } else {
+        errEl.textContent = d.hata === 'Kullanici bulunamadi veya sifre yanlis.' ? 'Kullanici adi veya sifre yanlis!' : d.hata;
+      }
       return;
     }
     if (d.token) {
@@ -88652,6 +88668,10 @@ function doRegister() {
       errEl.style.color = '#10b981';
       errEl.textContent = 'Kayit basarili! Giris yapiliyor...';
       setTimeout(function() { location.reload(); }, 1000);
+    } else if (d.onayGerekli || d.basarili) {
+      errEl.style.color = '#10b981';
+      errEl.textContent = '\u2705 Kayit basarili! ' + emailVal + ' adresine dogrulama linki gonderildi. Linke tiklayarak hesabini aktif et.';
+      if (btnReg) { btnReg.disabled = false; btnReg.textContent = 'Mail Gonderildi'; }
     }
   }).catch(function(e) {
     if (btnReg) { btnReg.disabled = false; btnReg.textContent = 'Kayit Ol'; }
