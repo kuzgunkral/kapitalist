@@ -88829,7 +88829,8 @@ function loadUserGame(username) {
         } else {
           localStorage.setItem(key2, JSON.stringify(supaVeri));
         }
-        // Bulut verisi yuklenince tekrar loadUserGame cagir (G objesi hazir degil, loadUserGame kuracak)
+        // Bulut verisi var - localStorage'a yazildi, oyunu yukle
+        window._supaYuklendi = false;
         loadUserGame(username);
       } else {
         // Bulutta kayit yok: YEREL KAYDI KORU - oyunu kapatma, setup'a dusme
