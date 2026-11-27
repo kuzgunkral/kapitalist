@@ -88829,8 +88829,12 @@ function loadUserGame(username) {
         } else {
           localStorage.setItem(key2, JSON.stringify(supaVeri));
         }
-        // Bulut verisi yuklenince tekrar loadUserGame cagir (G objesi hazir degil, loadUserGame kuracak)
-        loadUserGame(username);
+        // Bulut verisi yuklenince oyunu ac
+        window._gameOpen = true;
+        var gw2 = document.getElementById('gameWrap'); if(gw2) gw2.style.display = 'block';
+        var lw2b = document.getElementById('loginWrap'); if(lw2b) lw2b.style.display = 'none';
+        var sw2b = document.getElementById('setupWrap'); if(sw2b) sw2b.style.display = 'none';
+        try { if(typeof openGame === 'function') openGame(); } catch(_eg) {}
       } else {
         // Bulutta kayit yok: YEREL KAYDI KORU - oyunu kapatma, setup'a dusme
         try {
